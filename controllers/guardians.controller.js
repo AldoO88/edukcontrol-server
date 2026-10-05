@@ -33,6 +33,20 @@ const tenantFilter = (req) =>
 
 const ADMIN_LIKE_ROLES = ["admin", "registrar", "super_admin"];
 
+// School para queries de enrollments (filtros de la pantalla Padres y
+// stats por ciclo): usa la del JWT si existe (admin de escuela —
+// siempre tenant-safe). Si es `null` (super_admin, que navega
+// cross-tenant y el front SIEMPRE está dentro de una escuela/ciclo),
+// deriva el `school` del SchoolYear indicado.
+const schoolForYear = async (db, payloadSchoolId, yearOid) => {
+  if (payloadSchoolId) return payloadSchoolId;
+  if (!yearOid) return null;
+  const year = await db
+    .collection("schoolyears")
+    .findOne({ _id: yearOid }, { projection: { school: 1 } });
+  return year?.school || null;
+};
+
 // Helper: valida que cada studentId exista, pertenezca a la misma escuela
 // y (opcional) esté activo. Devuelve los docs o lanza error.
 // Cascada de User.isActive según el estado de los Guardian del mismo
@@ -158,12 +172,19 @@ const getAllGuardians = async (req, res, next) => {
 
       if (wantsGroup && yearOid) {
         const groupOid = new mongoose.Types.ObjectId(String(group_id));
-        const studentIds = await db.collection("enrollments").distinct("student_id", {
-          school: req.payload.schoolId,
-          school_year_id: yearOid,
-          group_id: groupOid,
-          cycle_status: "enrolled",
-        });
+        const enrollmentSchool = await schoolForYear(
+          db,
+          req.payload.schoolId,
+          yearOid
+        );
+        const studentIds = enrollmentSchool
+          ? await db.collection("enrollments").distinct("student_id", {
+              school: enrollmentSchool,
+              school_year_id: yearOid,
+              group_id: groupOid,
+              cycle_status: "enrolled",
+            })
+          : [];
         studentIds.forEach((id) => idsByGroup.add(String(id)));
       }
       if (wantsTaller) {
@@ -217,6 +238,9 @@ const getAllGuardians = async (req, res, next) => {
 // GET /api/guardians/stats
 // Devuelve métricas del módulo de tutores para la pantalla "Padres".
 // Pensado para una sola request por carga (4 cifras en una pasada).
+// Acepta `?school_year_id=<oid>` opcional para resolver el ciclo de
+// `con_hijos_en_ciclo` (lo manda el front, que siempre navega dentro
+// de una escuela/ciclo — necesario para super_admin, sin schoolId).
 //
 // Cifras (todas tenant-scoped):
 //   total                — todos los Guardian de la escuela
@@ -236,20 +260,20 @@ const getGuardiansStats = async (req, res, next) => {
   try {
     const tenant = tenantFilter(req);
     const db = mongoose.connection.db;
+    const { school_year_id } = req.query;
 
-    // Escuela del tenant (para resolver el ciclo activo). Si el
-    // super_admin pidió sin school, devolvemos 0 en los cortes por
-    // ciclo y dejamos los conteos school-wide agregados a null.
+    // Ciclo para el corte `con_hijos_en_ciclo`: el `school_year_id`
+    // recibido si es válido, o el `current_school_year_id` del School
+    // del tenant (admin de escuela). super_admin sin param → null
+    // (corte queda en 0, como antes).
     let activeSchoolYearId = null;
-    if (req.payload.role !== "super_admin" && req.payload.schoolId) {
+    if (school_year_id && mongoose.Types.ObjectId.isValid(String(school_year_id))) {
+      activeSchoolYearId = new mongoose.Types.ObjectId(String(school_year_id));
+    } else if (req.payload.schoolId) {
       const school = await db
         .collection("schools")
         .findOne({ _id: req.payload.schoolId }, { projection: { current_school_year_id: 1 } });
       activeSchoolYearId = school?.current_school_year_id || null;
-    } else if (req.payload.role === "super_admin") {
-      // super_admin sin scope específico: agregamos por escuela; el
-      // front (que siempre navega dentro de una escuela) no usará
-      // esta rama. Para mantenerlo simple, lo dejamos en null.
     }
 
     const [
@@ -300,13 +324,20 @@ const getGuardiansStats = async (req, res, next) => {
 
     if (activeSchoolYearId) {
       // Padres con ≥1 hijo con enrollment "enrolled" en el ciclo activo.
-      const enrolled = await db
-        .collection("enrollments")
-        .distinct("student_id", {
-          school: req.payload.schoolId,
-          school_year_id: activeSchoolYearId,
-          cycle_status: "enrolled",
-        });
+      // school = la del JWT, o la del ciclo si es super_admin (schoolId
+      // null) — ver schoolForYear.
+      const enrollmentSchool = await schoolForYear(
+        db,
+        req.payload.schoolId,
+        activeSchoolYearId
+      );
+      const enrolled = enrollmentSchool
+        ? await db.collection("enrollments").distinct("student_id", {
+            school: enrollmentSchool,
+            school_year_id: activeSchoolYearId,
+            cycle_status: "enrolled",
+          })
+        : [];
       const enrolledSet = new Set(enrolled.map((id) => String(id)));
       conHijosEnCiclo = await Guardian.countDocuments({
         ...tenant,
