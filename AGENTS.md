@@ -91,7 +91,7 @@ All under `/api` (no `/v1` prefix). Auth endpoints are under `/auth` (no `/api` 
 | POST | `/auth/logout` | none | Limpia la cookie HttpOnly de auth. |
 | POST | `/api/students/register` | JWT + `admin`/`registrar` | `rfid_card` is uppercased on save; `controlNumber` is auto-generated (10 chars: YY + SHIFT + CCT4 + CONSEC). Unique per school. |
 | GET | `/api/students` | JWT + any staff role | Paginated (`page`, `limit` max 100), filter by `status`, `group`, free-text `search`. |
-| GET | `/api/students/export` | JWT + any staff role | Descarga `.xlsx` del padrón: `Numero de Control`, `Nombre Completo`, `Genero`, `RFID`. Sin paginación; mismos filtros opcionales que `GET /api/students` (`status`, `group`, `search`, `school_year_id`). Registrada ANTES de `/:studentId`. |
+| GET | `/api/students/export` | JWT + any staff role | Descarga `.xlsx` del padrón: `Numero de Control`, `Nombre Completo`, `Genero`, `RFID`, `Grado`, `Grupo` (formato `1A`, igual que la columna `grupo` del import). Sin paginación; mismos filtros opcionales que `GET /api/students` (`status`, `group`, `search`, `school_year_id`). Registrada ANTES de `/:studentId`. |
 | GET | `/api/students/:studentId` | JWT + any staff role | |
 | PUT | `/api/students/:studentId` | JWT + `admin`/`registrar` | `school` cannot be changed by non-`super_admin`. |
 | DELETE | `/api/students/:studentId` | JWT + `admin`/`registrar` | |

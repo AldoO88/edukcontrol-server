@@ -1471,8 +1471,8 @@ const importStudentsFromSpreadsheet = async (req, res, next) => {
 // =====================================================================
 // GET /api/students/export
 // Exporta el padrón a Excel (.xlsx): numero de control, nombre completo,
-// genero y RFID. Mismos filtros opcionales que getAllStudents
-// (status, group, search, school_year_id) pero SIN paginación.
+// genero, RFID, grado y grupo. Mismos filtros opcionales que
+// getAllStudents (status, group, search, school_year_id) SIN paginación.
 // =====================================================================
 const exportStudentsToExcel = async (req, res, next) => {
   try {
@@ -1506,7 +1506,8 @@ const exportStudentsToExcel = async (req, res, next) => {
     }
 
     const students = await Student.find(filter)
-      .select("controlNumber first_name last_name sex rfid_card")
+      .select("controlNumber first_name last_name sex rfid_card current_group_id")
+      .populate("current_group_id", "grade section type")
       .sort({ last_name: 1, first_name: 1 })
       .lean();
 
@@ -1514,15 +1515,24 @@ const exportStudentsToExcel = async (req, res, next) => {
     // importStudentsFromSpreadsheet hace .toUpperCase() y matchea
     // MASCULINO/FEMENINO → male/female, así el export re-importa limpio.
     const genderLabel = { male: "Masculino", female: "Femenino" };
-    const rows = students.map((s) => [
-      s.controlNumber || "",
-      `${s.first_name || ""} ${s.last_name || ""}`.trim(),
-      genderLabel[s.sex] || "",
-      s.rfid_card || "",
-    ]);
+    const rows = students.map((s) => {
+      // Grupo en el mismo formato que espera el import (1A, 2D…:
+      // `${grade}${section}` — ver groupByLabel en importStudentsFromSpreadsheet)
+      const g = s.current_group_id;
+      const grade = g && g.grade != null ? g.grade : "";
+      const section = g && g.section ? String(g.section).toUpperCase() : "";
+      return [
+        s.controlNumber || "",
+        `${s.first_name || ""} ${s.last_name || ""}`.trim(),
+        genderLabel[s.sex] || "",
+        s.rfid_card || "",
+        grade,
+        g && g.grade != null && section ? `${g.grade}${section}` : "",
+      ];
+    });
 
     const worksheet = XLSX.utils.aoa_to_sheet([
-      ["Numero de Control", "Nombre Completo", "Genero", "RFID"],
+      ["Numero de Control", "Nombre Completo", "Genero", "RFID", "Grado", "Grupo"],
       ...rows,
     ]);
     const workbook = XLSX.utils.book_new();
