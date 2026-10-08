@@ -14,8 +14,16 @@ const {
   saveForRetry,
 } = require("../services/cloudinary-upload.service");
 const { saveWithControlNumberRetry } = require("../services/control-number.service");
-// archiver v8 exporta clases (ZipArchive), ya no una función default.
-const { ZipArchive } = require("archiver");
+// archiver v8 es ESM-only (type: module). En este proyecto CommonJS con
+// Node 20, require() directo revienta con ERR_REQUIRE_ESM — se carga con
+// import() dinámico (permitido en CJS desde Node 12), cacheado.
+let zipArchiveLoader = null;
+const loadZipArchive = () => {
+  if (!zipArchiveLoader) {
+    zipArchiveLoader = import("archiver").then((m) => m.ZipArchive);
+  }
+  return zipArchiveLoader;
+};
 
 // Migra los assets (logos/fotos) de un student de una escuela a otra.
 // Usado cuando se cambia el campo `school` de un Student. Renombra los
@@ -1658,6 +1666,7 @@ const exportStudentPhotos = async (req, res, next) => {
     res.setHeader("Content-Type", "application/zip");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
 
+    const ZipArchive = await loadZipArchive();
     const archive = new ZipArchive({ zlib: { level: 6 } });
     archive.on("warning", (err) => {
       console.warn(`[students-export-photos] warning: ${err.message}`);
