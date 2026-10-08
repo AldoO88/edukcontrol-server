@@ -18,6 +18,7 @@ const {
   getStudentHealth,
   updateStudentHealth,
   importStudentsFromSpreadsheet,
+  exportStudentsToExcel,
 } = require("../controllers/students.controller");
 const { isAuthenticated } = require("../middleware/jwt.middleware");
 const { authorize } = require("../middleware/authorize.middleware");
@@ -41,6 +42,13 @@ router.get(
   "/",
   authorize("admin", "principal", "registrar", "teacher", "prefect", "social_worker", "super_admin"),
   getAllStudents
+);
+
+// GET /api/students/export — descarga Excel del padrón — DEBE ir antes que /:studentId
+router.get(
+  "/export",
+  authorize("admin", "principal", "registrar", "teacher", "prefect", "social_worker", "super_admin"),
+  exportStudentsToExcel
 );
 
 // GET /api/students/:studentId — detalle de un estudiante

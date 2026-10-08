@@ -1468,9 +1468,86 @@ const importStudentsFromSpreadsheet = async (req, res, next) => {
   } catch (error) { next(error); }
 };
 
+// =====================================================================
+// GET /api/students/export
+// Exporta el padrón a Excel (.xlsx): numero de control, nombre completo,
+// genero y RFID. Mismos filtros opcionales que getAllStudents
+// (status, group, search, school_year_id) pero SIN paginación.
+// =====================================================================
+const exportStudentsToExcel = async (req, res, next) => {
+  try {
+    const { status, group, search, school_year_id } = req.query;
+
+    const filter = { ...tenantFilter(req) };
+    if (status) filter.status = status;
+    if (group && mongoose.Types.ObjectId.isValid(group)) {
+      filter.current_group_id = group;
+    }
+    if (school_year_id && mongoose.Types.ObjectId.isValid(school_year_id)) {
+      const enrolledIds = await Enrollment.distinct("student_id", {
+        ...tenantFilter(req),
+        school_year_id,
+        cycle_status: "enrolled",
+      });
+      filter._id = { $in: enrolledIds };
+    }
+    if (search) {
+      const safe = String(search).trim();
+      const regex = new RegExp(
+        safe.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+        "i"
+      );
+      filter.$or = [
+        { first_name: regex },
+        { last_name: regex },
+        { controlNumber: regex },
+        { rfid_card: regex },
+      ];
+    }
+
+    const students = await Student.find(filter)
+      .select("controlNumber first_name last_name sex rfid_card")
+      .sort({ last_name: 1, first_name: 1 })
+      .lean();
+
+    // "Masculino"/"Femenino" en minusculas NO revienta el import:
+    // importStudentsFromSpreadsheet hace .toUpperCase() y matchea
+    // MASCULINO/FEMENINO → male/female, así el export re-importa limpio.
+    const genderLabel = { male: "Masculino", female: "Femenino" };
+    const rows = students.map((s) => [
+      s.controlNumber || "",
+      `${s.first_name || ""} ${s.last_name || ""}`.trim(),
+      genderLabel[s.sex] || "",
+      s.rfid_card || "",
+    ]);
+
+    const worksheet = XLSX.utils.aoa_to_sheet([
+      ["Numero de Control", "Nombre Completo", "Genero", "RFID"],
+      ...rows,
+    ]);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Alumnos");
+    const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+
+    const filename = `alumnos-${new Date().toISOString().slice(0, 10)}.xlsx`.replace(
+      /[^a-zA-Z0-9.-]/g,
+      "_"
+    );
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    return res.send(Buffer.from(buffer));
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createStudent,
   getAllStudents,
+  exportStudentsToExcel,
   getStudentById,
   updateStudent,
   deleteStudent,
