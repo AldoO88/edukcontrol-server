@@ -1523,7 +1523,7 @@ const exportStudentsToExcel = async (req, res, next) => {
       const section = g && g.section ? String(g.section).toUpperCase() : "";
       return [
         s.controlNumber || "",
-        `${s.first_name || ""} ${s.last_name || ""}`.trim(),
+        `${s.last_name || ""} ${s.first_name || ""}`.trim(),
         genderLabel[s.sex] || "",
         s.rfid_card || "",
         grade,
