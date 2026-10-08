@@ -1,0 +1,275 @@
+[
+  {
+    "_id": "6ac0d38e09af25c1dbc01fb6",
+    "student_id": "6ac0d38e09af25c1dbc01fac",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d38f09af25c1dbc01fc3",
+    "student_id": "6ac0d38e09af25c1dbc01fb9",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d38f09af25c1dbc01fca",
+    "student_id": "6ac0d38f09af25c1dbc01fc6",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d39009af25c1dbc01fd7",
+    "student_id": "6ac0d38f09af25c1dbc01fcd",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d39009af25c1dbc01fe4",
+    "student_id": "6ac0d39009af25c1dbc01fda",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d39109af25c1dbc01ff1",
+    "student_id": "6ac0d39009af25c1dbc01fe7",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d39109af25c1dbc01ffe",
+    "student_id": "6ac0d39109af25c1dbc01ff4",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d39209af25c1dbc0200b",
+    "student_id": "6ac0d39109af25c1dbc02001",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d39209af25c1dbc02018",
+    "student_id": "6ac0d39209af25c1dbc0200e",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d39309af25c1dbc02025",
+    "student_id": "6ac0d39309af25c1dbc0201b",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d39409af25c1dbc02032",
+    "student_id": "6ac0d39309af25c1dbc02028",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d39409af25c1dbc0203f",
+    "student_id": "6ac0d39409af25c1dbc02035",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d39509af25c1dbc0204c",
+    "student_id": "6ac0d39409af25c1dbc02042",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d39509af25c1dbc02059",
+    "student_id": "6ac0d39509af25c1dbc0204f",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d39609af25c1dbc02062",
+    "student_id": "6ac0d39509af25c1dbc0205c",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d39609af25c1dbc0206f",
+    "student_id": "6ac0d39609af25c1dbc02065",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d39709af25c1dbc0207c",
+    "student_id": "6ac0d39609af25c1dbc02072",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d39709af25c1dbc02089",
+    "student_id": "6ac0d39709af25c1dbc0207f",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d39809af25c1dbc02092",
+    "student_id": "6ac0d39709af25c1dbc0208c",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d39809af25c1dbc0209f",
+    "student_id": "6ac0d39809af25c1dbc02095",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d39909af25c1dbc020ac",
+    "student_id": "6ac0d39809af25c1dbc020a2",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d39909af25c1dbc020b9",
+    "student_id": "6ac0d39909af25c1dbc020af",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d39a09af25c1dbc020c6",
+    "student_id": "6ac0d39909af25c1dbc020bc",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d39a09af25c1dbc020d3",
+    "student_id": "6ac0d39a09af25c1dbc020c9",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d39b09af25c1dbc020e0",
+    "student_id": "6ac0d39b09af25c1dbc020d6",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d39b09af25c1dbc020ed",
+    "student_id": "6ac0d39b09af25c1dbc020e3",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d39c09af25c1dbc020fa",
+    "student_id": "6ac0d39c09af25c1dbc020f0",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d39d09af25c1dbc02107",
+    "student_id": "6ac0d39c09af25c1dbc020fd",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d39d09af25c1dbc02114",
+    "student_id": "6ac0d39d09af25c1dbc0210a",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d39e09af25c1dbc02121",
+    "student_id": "6ac0d39d09af25c1dbc02117",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d39e09af25c1dbc0212e",
+    "student_id": "6ac0d39e09af25c1dbc02124",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d39f09af25c1dbc0213b",
+    "student_id": "6ac0d39e09af25c1dbc02131",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d39f09af25c1dbc02148",
+    "student_id": "6ac0d39f09af25c1dbc0213e",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d3a009af25c1dbc02155",
+    "student_id": "6ac0d39f09af25c1dbc0214b",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d3a009af25c1dbc02162",
+    "student_id": "6ac0d3a009af25c1dbc02158",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d3a109af25c1dbc0216f",
+    "student_id": "6ac0d3a009af25c1dbc02165",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d3a109af25c1dbc0217c",
+    "student_id": "6ac0d3a109af25c1dbc02172",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d3a209af25c1dbc02189",
+    "student_id": "6ac0d3a109af25c1dbc0217f",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  },
+  {
+    "_id": "6ac0d3a209af25c1dbc02196",
+    "student_id": "6ac0d3a209af25c1dbc0218c",
+    "group_id": "6abda89e9fe7f936ef15f003",
+    "school_year_id": "6abda89e9fe7f936ef15eff9",
+    "cycle_status": "enrolled"
+  }
+]

@@ -1,0 +1,585 @@
+[
+  {
+    "_id": "6ac0d38e09af25c1dbc01fac",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "AUPA130702MHGGDNA7",
+    "controlNumber": null,
+    "first_name": "ANA CAMILA",
+    "last_name": "AGUILAR PADRON",
+    "sex": null,
+    "guardians": [
+      "6ac0d38e09af25c1dbc01faf"
+    ],
+    "current_group_id": null,
+    "address": "PLAZA RENAVIT, N°12,COL. INDEPENDENCIA",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d38e09af25c1dbc01fb9",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "AACY130928HMCLRRA6",
+    "controlNumber": null,
+    "first_name": "YAIR ALEXANDER",
+    "last_name": "ALVARADO CRUZ",
+    "sex": null,
+    "guardians": [
+      "6ac0d38f09af25c1dbc01fbc"
+    ],
+    "current_group_id": null,
+    "address": "CHICHONAL, N°57, VALLE DE GUADALUPE",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d38f09af25c1dbc01fc6",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "AARG130930MHGLCRA2",
+    "controlNumber": null,
+    "first_name": "GRECIA YEZALEL",
+    "last_name": "ALVAREZ RICO",
+    "sex": null,
+    "guardians": [],
+    "current_group_id": null,
+    "address": "PICO DE DANTE, #49,VALLE DE GUADALUPE",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d38f09af25c1dbc01fcd",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "AOJK130525MHGRMRA5",
+    "controlNumber": "2510049123",
+    "first_name": "KARLA MAYTE",
+    "last_name": "ARROYO JIMENEZ",
+    "sex": null,
+    "guardians": [
+      "6ac0d38f09af25c1dbc01fd0"
+    ],
+    "current_group_id": "6abda89e9fe7f936ef15f003",
+    "address": "AV.CENTRAL, EDIF.05, DEP.402 MINEROS",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d39009af25c1dbc01fda",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "BACR130918HVZTHBA9",
+    "controlNumber": null,
+    "first_name": "RUBEN",
+    "last_name": "BAUTISTA CHAVARRIA",
+    "sex": null,
+    "guardians": [
+      "6ac0d39009af25c1dbc01fdd"
+    ],
+    "current_group_id": null,
+    "address": "ANDADOR.11, N°10,COL. MORELOS",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d39009af25c1dbc01fe7",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "CAFS130810HHGMLNA4",
+    "controlNumber": null,
+    "first_name": "SANTIAGO",
+    "last_name": "CAMPOS FLORES",
+    "sex": null,
+    "guardians": [
+      "6ac0d39009af25c1dbc01fea"
+    ],
+    "current_group_id": null,
+    "address": "13 DE ABRIL, N°117, COL-INDEPENDENCIA",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d39109af25c1dbc01ff4",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "CASA131019HHGSNXA4",
+    "controlNumber": null,
+    "first_name": "AXEL ESAU",
+    "last_name": "CASTILLO SANCHEZ",
+    "sex": null,
+    "guardians": [
+      "6ac0d39109af25c1dbc01ff7"
+    ],
+    "current_group_id": null,
+    "address": "C.MARZO,MZA # 16 LT4,COL.21 DE JULIO",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d39109af25c1dbc02001",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "COGJ130625HHGNRRA2",
+    "controlNumber": null,
+    "first_name": "JEREMY",
+    "last_name": "CONTRERAS GARCIA",
+    "sex": null,
+    "guardians": [
+      "6ac0d39209af25c1dbc02004"
+    ],
+    "current_group_id": null,
+    "address": "COL. ROJO GOMEZ, N°20, ALFREDO V.BONFIL",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d39209af25c1dbc0200e",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "CURE130605MHGRLMA4",
+    "controlNumber": null,
+    "first_name": "EMILY YARETZI",
+    "last_name": "CRUZ ROLDAN",
+    "sex": null,
+    "guardians": [
+      "6ac0d39209af25c1dbc02011"
+    ],
+    "current_group_id": null,
+    "address": "MATAMOROS ORIENTE, N°78, CENTRO, TLANALAPA",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d39309af25c1dbc0201b",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "VARA130427HHGLDLA5",
+    "controlNumber": null,
+    "first_name": "RODRIGUEZ ALEXIS",
+    "last_name": "DEL VALLE",
+    "sex": null,
+    "guardians": [
+      "6ac0d39309af25c1dbc0201e"
+    ],
+    "current_group_id": null,
+    "address": "HIDALGO, N°15, SANTA CLARA",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d39309af25c1dbc02028",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "EIOC130714MHGSLRA2",
+    "controlNumber": "2510049121",
+    "first_name": "CRYSTAL GUADALUPE",
+    "last_name": "ESPINOZA OLVERA",
+    "sex": null,
+    "guardians": [
+      "6ac0d39309af25c1dbc0202b"
+    ],
+    "current_group_id": "6abda89e9fe7f936ef15f003",
+    "address": "COL.ALLENDE, N°7, CHINCONCUAC",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d39409af25c1dbc02035",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "EIMJ130827MHGNNNA4",
+    "controlNumber": "2510049120",
+    "first_name": "JENNY GUADALUPE",
+    "last_name": "ENRIQUEZ MONTIEL",
+    "sex": null,
+    "guardians": [
+      "6ac0d39409af25c1dbc02038"
+    ],
+    "current_group_id": "6abda89e9fe7f936ef15f003",
+    "address": "CIRCUNUALACIÓN SUR, S/N, ALFREDO V.BONFIL",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d39409af25c1dbc02042",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "FOGD130531MHGLRNA0",
+    "controlNumber": null,
+    "first_name": "DANIELA SAMARA",
+    "last_name": "FLORES GARCIA",
+    "sex": null,
+    "guardians": [
+      "6ac0d39409af25c1dbc02045"
+    ],
+    "current_group_id": null,
+    "address": "CALLE.HIDROGENO, N°3, COL.TESATLA",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d39509af25c1dbc0204f",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "GAMK130322MHGRRYB6",
+    "controlNumber": null,
+    "first_name": "KEYRI SHERLYN",
+    "last_name": "GARCIA MARTINEZ",
+    "sex": null,
+    "guardians": [
+      "6ac0d39509af25c1dbc02052"
+    ],
+    "current_group_id": null,
+    "address": "MINA DE PLATINO, N°33, INDEPENDENCIA",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d39509af25c1dbc0205c",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "GUHM130314HDFTRKA2",
+    "controlNumber": null,
+    "first_name": "MAIKOL KARIM",
+    "last_name": "GUTIERREZ HERRERA",
+    "sex": null,
+    "guardians": [
+      "6ac0d1983d6ec18b27cd0e1d"
+    ],
+    "current_group_id": null,
+    "address": "ALLENDE, N°2A, CHINCONCUAC",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d39609af25c1dbc02065",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "HEPI131128HPLRXNA3",
+    "controlNumber": null,
+    "first_name": "IAN SANTIAGO",
+    "last_name": "HERNANDEZ PEÑA",
+    "sex": null,
+    "guardians": [
+      "6ac0d39609af25c1dbc02068"
+    ],
+    "current_group_id": null,
+    "address": "13 DE ABRIL, 3ER RET., N°2, INDEPENDENCIA",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d39609af25c1dbc02072",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "HEEA130812MHGRVSA7",
+    "controlNumber": null,
+    "first_name": "ASHLEY ELIANETH",
+    "last_name": "HERNANDEZ EVANGELISTA",
+    "sex": null,
+    "guardians": [
+      "6ac0d39609af25c1dbc02075"
+    ],
+    "current_group_id": null,
+    "address": "LAZARO CARDENAS, N°39, ALFREDO V.BONFIL",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d39709af25c1dbc0207f",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "HECH130512HHGRRGA2",
+    "controlNumber": null,
+    "first_name": "HUGO JESUS",
+    "last_name": "HERRERA CORDOVA",
+    "sex": null,
+    "guardians": [
+      "6ac0d39709af25c1dbc02082"
+    ],
+    "current_group_id": null,
+    "address": "AND 1,CENTRAL, EDIF.3, DEPTO.201, MINEROS",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d39709af25c1dbc0208c",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "JICA131119MHGMSLA3",
+    "controlNumber": "2510049122",
+    "first_name": "ALEJANDRA GUADALUPE",
+    "last_name": "JIMENEZ CASTILLO",
+    "sex": null,
+    "guardians": [
+      "6ac0cfd93d6ec18b27ccff6e"
+    ],
+    "current_group_id": "6abda89e9fe7f936ef15f003",
+    "address": "MARIANO MATAMOROS OTE, N°62, CENTRO",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d39809af25c1dbc02095",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "LAMM130907HHGZNNA3",
+    "controlNumber": null,
+    "first_name": "MANUEL",
+    "last_name": "LAZCANO MENESES",
+    "sex": null,
+    "guardians": [
+      "6ac0d39809af25c1dbc02098"
+    ],
+    "current_group_id": null,
+    "address": "FLAVIO SANCHEZ SUR, N°16 B, CENTRO",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d39809af25c1dbc020a2",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "LOHO130810MHGZRDA7",
+    "controlNumber": null,
+    "first_name": "ODALIS",
+    "last_name": "LOZANO HERNANDEZ",
+    "sex": null,
+    "guardians": [
+      "6ac0d39909af25c1dbc020a5"
+    ],
+    "current_group_id": null,
+    "address": "MARIANO MATAMOROS, N°37, MIGUEL HIDALGO",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d39909af25c1dbc020af",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "MACV130829MDFRSSA0",
+    "controlNumber": "2510049119",
+    "first_name": "VASTY SAHORY",
+    "last_name": "MARTINEZ CASTELLANOS",
+    "sex": null,
+    "guardians": [
+      "6ac0d39909af25c1dbc020b2"
+    ],
+    "current_group_id": "6abda89e9fe7f936ef15f003",
+    "address": "RET.GUADALUPE, N°22, BENITO JUAREZ",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d39909af25c1dbc020bc",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "MOVX130327MHGNLMA2",
+    "controlNumber": null,
+    "first_name": "XIMENA",
+    "last_name": "MONRROY VALDERRABANO",
+    "sex": null,
+    "guardians": [
+      "6ac0d39a09af25c1dbc020bf"
+    ],
+    "current_group_id": null,
+    "address": "RET.AGUASCALIENTES, #3, BENITO JUAREZ",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d39a09af25c1dbc020c9",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "MOTI130805HHGRRKA0",
+    "controlNumber": null,
+    "first_name": "IKER ZOE",
+    "last_name": "MORANTE TERRAZAS",
+    "sex": null,
+    "guardians": [
+      "6ac0d39a09af25c1dbc020cc"
+    ],
+    "current_group_id": null,
+    "address": "IGNACIO LOPEZ RAYON, N°24, MIGUEL HIDALGO",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d39b09af25c1dbc020d6",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "MOCL130918MHGRXSA4",
+    "controlNumber": null,
+    "first_name": "LESLIE MELISSA",
+    "last_name": "MORENO CAÑEDO",
+    "sex": null,
+    "guardians": [
+      "6ac0d39b09af25c1dbc020d9"
+    ],
+    "current_group_id": null,
+    "address": "CALLE,12, N°25A, IMSS",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d39b09af25c1dbc020e3",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "OEGM130106MHGLNLA7",
+    "controlNumber": null,
+    "first_name": "MELANY YAMILETH",
+    "last_name": "OLVERA GONZALEZ",
+    "sex": null,
+    "guardians": [
+      "6ac0d39b09af25c1dbc020e6"
+    ],
+    "current_group_id": null,
+    "address": "FOSFORO, N°9, COL.VILLAS",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d39c09af25c1dbc020f0",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "OELV131011MHGRPLA4",
+    "controlNumber": null,
+    "first_name": "VALERIA",
+    "last_name": "ORTEGA LOPEZ",
+    "sex": null,
+    "guardians": [
+      "6ac0d39c09af25c1dbc020f3"
+    ],
+    "current_group_id": null,
+    "address": "GENERAL FELIPÉ ANGELES, N°6 CHINCONCUAC",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d39c09af25c1dbc020fd",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "PEIC130530MHGXBMA7",
+    "controlNumber": null,
+    "first_name": "CAMILA ALESSANDRA",
+    "last_name": "PEÑA IBAÑEZ",
+    "sex": null,
+    "guardians": [
+      "6ac0d39c09af25c1dbc02100"
+    ],
+    "current_group_id": null,
+    "address": "FELIPE ANGELES, N°17,SANTA CLARA",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d39d09af25c1dbc0210a",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "PUAM131226MHGLLRA0",
+    "controlNumber": "2510049118",
+    "first_name": "MARIANA",
+    "last_name": "PULIDO ALVARADO",
+    "sex": null,
+    "guardians": [
+      "6ac0d39d09af25c1dbc0210d"
+    ],
+    "current_group_id": "6abda89e9fe7f936ef15f003",
+    "address": "ZARAGOZA NORTE, S/N, CENTRO, TLANALAPA",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d39d09af25c1dbc02117",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "RAGI131003HHGMNNA6",
+    "controlNumber": null,
+    "first_name": "IAN YAHEL",
+    "last_name": "RAMOS GONZALEZ",
+    "sex": null,
+    "guardians": [
+      "6ac0d39d09af25c1dbc0211a"
+    ],
+    "current_group_id": null,
+    "address": "C.HIDALGO, N°31, SANTA CLARA",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d39e09af25c1dbc02124",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "ROHR130903MHGBRGA4",
+    "controlNumber": null,
+    "first_name": "REGINA",
+    "last_name": "ROBLES HERNANDEZ",
+    "sex": null,
+    "guardians": [
+      "6ac0d39e09af25c1dbc02127"
+    ],
+    "current_group_id": null,
+    "address": "RET. SAN LUIS POTOSI, N°32, BENITO JUAREZ",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d39e09af25c1dbc02131",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "ROYJ131019HHGDXLA5",
+    "controlNumber": null,
+    "first_name": "JOEL",
+    "last_name": "RODRIGUEZ YAÑEZ",
+    "sex": null,
+    "guardians": [
+      "6ac0d39e09af25c1dbc02134"
+    ],
+    "current_group_id": null,
+    "address": "AV.PUEBLA, N°4, BENITO JUAREZ",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d39f09af25c1dbc0213e",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "ROGY130302MHGMRMA7",
+    "controlNumber": null,
+    "first_name": "YAMILETH",
+    "last_name": "ROMERO GARCIA",
+    "sex": null,
+    "guardians": [
+      "6ac0d39f09af25c1dbc02141"
+    ],
+    "current_group_id": null,
+    "address": "AV.FERROCARRILES, S/N, IROLO",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d39f09af25c1dbc0214b",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "RORJ130428MVZQYQA7",
+    "controlNumber": null,
+    "first_name": "JAQUELIN",
+    "last_name": "ROQUE REYES",
+    "sex": null,
+    "guardians": [
+      "6ac0d39f09af25c1dbc0214e"
+    ],
+    "current_group_id": null,
+    "address": "CHIHUAHUA, N°16, BENITO JUAREZ",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d3a009af25c1dbc02158",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "RULD130227MHGZNNA8",
+    "controlNumber": null,
+    "first_name": "DANNA",
+    "last_name": "RUIZ LUNA",
+    "sex": null,
+    "guardians": [
+      "6ac0d3a009af25c1dbc0215b"
+    ],
+    "current_group_id": null,
+    "address": "NEVADO DE COLIMA, N°33, VALLE DE GUADALUPE",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d3a009af25c1dbc02165",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "SAZH131203HDFNMGA5",
+    "controlNumber": null,
+    "first_name": "HUGO DANIEL",
+    "last_name": "SANCHEZ ZAMORANO",
+    "sex": null,
+    "guardians": [
+      "6ac0d3a109af25c1dbc02168"
+    ],
+    "current_group_id": null,
+    "address": "CORREGIDORA, N°38,COL. INDEPENDENCIA",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d3a109af25c1dbc02172",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "SOGC130816HHGSNRA0",
+    "controlNumber": null,
+    "first_name": "CARLOS EMILIO",
+    "last_name": "SOSA GONZALEZ",
+    "sex": null,
+    "guardians": [
+      "6ac0d3a109af25c1dbc02175"
+    ],
+    "current_group_id": null,
+    "address": "IGNACIO ALLENDE, N°89, INDEPENDENCIA",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d3a109af25c1dbc0217f",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "VEHP130718HHGLRDA5",
+    "controlNumber": null,
+    "first_name": "PEDRO DAMIAN",
+    "last_name": "VELOZ HERNANDEZ",
+    "sex": null,
+    "guardians": [
+      "6ac0d3a209af25c1dbc02182"
+    ],
+    "current_group_id": null,
+    "address": "AND.TOYODA, N°13, INDEPENDENCIA",
+    "phone": null
+  },
+  {
+    "_id": "6ac0d3a209af25c1dbc0218c",
+    "school": "6abc5b2de5ede2c2d76ae24a",
+    "curp": "ZAAR130102MHGMLNA6",
+    "controlNumber": null,
+    "first_name": "RENATA MICHELL",
+    "last_name": "ZAMORANO ALVAREZ",
+    "sex": null,
+    "guardians": [
+      "6ac0d3a209af25c1dbc0218f"
+    ],
+    "current_group_id": null,
+    "address": "AV.MIGUEL HIDALGO, N°26, COL. HIDALGO",
+    "phone": null
+  }
+]
