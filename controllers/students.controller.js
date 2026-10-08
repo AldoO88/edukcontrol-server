@@ -14,6 +14,8 @@ const {
   saveForRetry,
 } = require("../services/cloudinary-upload.service");
 const { saveWithControlNumberRetry } = require("../services/control-number.service");
+// archiver v8 exporta clases (ZipArchive), ya no una función default.
+const { ZipArchive } = require("archiver");
 
 // Migra los assets (logos/fotos) de un student de una escuela a otra.
 // Usado cuando se cambia el campo `school` de un Student. Renombra los
@@ -1554,10 +1556,164 @@ const exportStudentsToExcel = async (req, res, next) => {
   }
 };
 
+// ── Utilidades para el export de fotos ───────────────────────────────
+// Pool de concurrencia (mismo patrón que credential-pdf.service.js).
+const photoPool = async (items, limit, fn) => {
+  const queue = [...items];
+  const workers = Array.from(
+    { length: Math.min(limit, Math.max(queue.length, 1)) },
+    async () => {
+      while (queue.length) {
+        const item = queue.shift();
+        await fn(item);
+      }
+    }
+  );
+  await Promise.all(workers);
+};
+
+// Las fotos se guardan en WebP en Cloudinary; se pide la conversión a
+// JPEG con un prefijo de transformación en la URL (f_jpg), el mismo
+// truco que toPngUrl en credential-pdf.service.js. Devuelve null si la
+// URL no es descargable.
+const toJpgUrl = (url) => {
+  if (!/^https?:\/\//.test(url)) return null;
+  if (!url.includes("res.cloudinary.com")) return url;
+  if (url.includes("/upload/f_") || url.includes("/upload/t_")) return url;
+  return url.replace("/upload/", "/upload/f_jpg/");
+};
+
+const fetchJpegBytes = async (url, timeoutMs = 15000) => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const bytes = Buffer.from(await res.arrayBuffer());
+    // Sniff del magic number JPEG (FF D8); si Cloudinary no convirtió
+    // (p. ej. asset raro), se omite en vez de meter un archivo inválido.
+    if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return null;
+    return bytes;
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+// =====================================================================
+// GET /api/students/export/photos
+// ZIP en streaming con las fotos de los alumnos en JPEG, nombradas
+// <controlNumber>.jpg. Omite alumnos sin foto y sin numero de control.
+// Mismos filtros opcionales que exportStudentsToExcel.
+// =====================================================================
+const exportStudentPhotos = async (req, res, next) => {
+  try {
+    const { status, group, search, school_year_id } = req.query;
+
+    const filter = {
+      ...tenantFilter(req),
+      photoUrl: { $ne: null },
+      controlNumber: { $ne: null },
+    };
+    if (status) filter.status = status;
+    if (group && mongoose.Types.ObjectId.isValid(group)) {
+      filter.current_group_id = group;
+    }
+    if (school_year_id && mongoose.Types.ObjectId.isValid(school_year_id)) {
+      const enrolledIds = await Enrollment.distinct("student_id", {
+        ...tenantFilter(req),
+        school_year_id,
+        cycle_status: "enrolled",
+      });
+      filter._id = { $in: enrolledIds };
+    }
+    if (search) {
+      const safe = String(search).trim();
+      const regex = new RegExp(
+        safe.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+        "i"
+      );
+      filter.$or = [
+        { first_name: regex },
+        { last_name: regex },
+        { controlNumber: regex },
+        { rfid_card: regex },
+      ];
+    }
+
+    const students = await Student.find(filter)
+      .select("controlNumber photoUrl last_name first_name")
+      .sort({ last_name: 1, first_name: 1 })
+      .lean();
+
+    if (students.length === 0) {
+      return res
+        .status(404)
+        .json({ message: "No hay fotos de alumnos para exportar." });
+    }
+
+    const filename = `fotos-alumnos-${new Date().toISOString().slice(0, 10)}.zip`.replace(
+      /[^a-zA-Z0-9.-]/g,
+      "_"
+    );
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+
+    const archive = new ZipArchive({ zlib: { level: 6 } });
+    archive.on("warning", (err) => {
+      console.warn(`[students-export-photos] warning: ${err.message}`);
+    });
+    archive.on("error", (err) => {
+      console.error(`[students-export-photos] error: ${err.message}`);
+      res.destroy(err);
+    });
+    archive.pipe(res);
+
+    // super_admin exporta entre escuelas y el controlNumber solo es
+    // único por escuela: se desempata con un sufijo _2, _3…
+    const usedNames = new Map();
+    const uniqueName = (controlNumber) => {
+      const count = usedNames.get(controlNumber) || 0;
+      usedNames.set(controlNumber, count + 1);
+      return count === 0
+        ? `${controlNumber}.jpg`
+        : `${controlNumber}_${count + 1}.jpg`;
+    };
+
+    let added = 0;
+    await photoPool(students, 6, async (s) => {
+      try {
+        const jpgUrl = toJpgUrl(s.photoUrl);
+        if (!jpgUrl) return;
+        const bytes = await fetchJpegBytes(jpgUrl);
+        if (!bytes) {
+          console.warn(
+            `[students-export-photos] ${s.controlNumber}: no se pudo convertir a JPEG`
+          );
+          return;
+        }
+        archive.append(bytes, { name: uniqueName(s.controlNumber) });
+        added++;
+      } catch (err) {
+        console.warn(
+          `[students-export-photos] ${s.controlNumber}: ${err.message}`
+        );
+      }
+    });
+
+    console.log(
+      `[students-export-photos] ${added}/${students.length} fotos en el ZIP`
+    );
+    await archive.finalize();
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createStudent,
   getAllStudents,
   exportStudentsToExcel,
+  exportStudentPhotos,
   getStudentById,
   updateStudent,
   deleteStudent,

@@ -19,6 +19,7 @@ const {
   updateStudentHealth,
   importStudentsFromSpreadsheet,
   exportStudentsToExcel,
+  exportStudentPhotos,
 } = require("../controllers/students.controller");
 const { isAuthenticated } = require("../middleware/jwt.middleware");
 const { authorize } = require("../middleware/authorize.middleware");
@@ -49,6 +50,13 @@ router.get(
   "/export",
   authorize("admin", "principal", "registrar", "teacher", "prefect", "social_worker", "super_admin"),
   exportStudentsToExcel
+);
+
+// GET /api/students/export/photos — ZIP con fotos JPEG por numero de control
+router.get(
+  "/export/photos",
+  authorize("admin", "principal", "registrar", "teacher", "prefect", "social_worker", "super_admin"),
+  exportStudentPhotos
 );
 
 // GET /api/students/:studentId — detalle de un estudiante
