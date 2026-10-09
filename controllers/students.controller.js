@@ -1635,12 +1635,12 @@ const fetchJpegBytes = async (url, timeoutMs = 15000) => {
 // GET /api/students/export/photos
 // ZIP en streaming con las fotos de los alumnos en JPEG.
 //   - default:        <controlNumber>.jpg (ZIP fotos-alumnos-<fecha>.zip)
-//   - ?format=ivms:   <ID8>_<APELLIDO NOMBRE>.jpeg — patrón "Person
+//   - ?format=ivms:   <ID8>_<APELLIDO NOMBRE>.jpg — patrón "Person
 //                     ID_Name" que exige iVMS-4200 para el import de
 //                     caras (ID8 = 8 dígitos YY+SHIFT+CCT2+CONSEC, ver
 //                     utils/ivms-id.js; Name = apellido(s) + nombre en
 //                     MAYÚSCULAS sin acentos, ej.
-//                     "26149001_LOPEZ GARCIA PEDRO.jpeg") y foto
+//                     "26149001_LOPEZ GARCIA PEDRO.jpg") y foto
 //                     re-escala a 640x640 JPEG. ZIP
 //                     fotos-ivms-<fecha>.zip.
 // Omite alumnos sin foto y sin numero de control.
@@ -1714,12 +1714,11 @@ const exportStudentPhotos = async (req, res, next) => {
     // o ID8) solo es único por escuela: se desempata con un sufijo
     // _2, _3… (va DESPUÉS del Name — el ID antes del primer "_"
     // queda intacto, iVMS sigue parseando el Person ID).
-    const ext = isIvms ? ".jpeg" : ".jpg";
     const usedNames = new Map();
     const uniqueName = (base) => {
       const count = usedNames.get(base) || 0;
       usedNames.set(base, count + 1);
-      return count === 0 ? `${base}${ext}` : `${base}_${count + 1}${ext}`;
+      return count === 0 ? `${base}.jpg` : `${base}_${count + 1}.jpg`;
     };
 
     let added = 0;
