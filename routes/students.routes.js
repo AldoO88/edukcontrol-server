@@ -53,6 +53,7 @@ router.get(
 );
 
 // GET /api/students/export/photos — ZIP con fotos JPEG por numero de control
+// (?format=ivms: nombres <ID8>.jpg de 8 dígitos + foto 640x640, para iVMS-4200)
 router.get(
   "/export/photos",
   authorize("admin", "principal", "registrar", "teacher", "prefect", "social_worker", "super_admin"),

@@ -1591,6 +1591,41 @@ const toJpgUrl = (url) => {
   return url.replace("/upload/", "/upload/f_jpg/");
 };
 
+// Variante para el export iVMS: pide 640x640 JPEG (el mínimo que
+// accepta la importación de caras de iVMS-4200 es ~640x480 y el
+// asset original ya es un 300x300, así que hace upscale). La foto
+// guardada es WebP, por eso también va f_jpg en el path.
+const toIvmsJpegUrl = (url) => {
+  if (!/^https?:\/\//.test(url)) return null;
+  if (!url.includes("res.cloudinary.com")) return url;
+  if (
+    url.includes("/upload/f_") ||
+    url.includes("/upload/t_") ||
+    url.includes("/upload/w_")
+  ) {
+    return url;
+  }
+  return url.replace(
+    "/upload/",
+    "/upload/w_640,h_640,c_fill,f_jpg,q_auto/"
+  );
+};
+
+// ID8 para iVMS-4200: YY(2) + SHIFT(1) + CCT2(2) + CONSEC(3) = 8 dígitos.
+// Ej.: controlNumber "2610049001" (CCT 0049) → "26149001".
+// CCT2 = el CCT4 sin ceros a la izquierda ("0049" → "49"); si eso no
+// da exactamente 2 dígitos (otra escuela con CCT distinto), se usan
+// los últimos 2 del CCT4 para garantizar siempre 8. Devuelve null si
+// el controlNumber no tiene el formato de 10 dígitos (overrides
+// manuales) — en ese caso el alumno se omite del export ivms.
+const buildIvmsId = (controlNumber) => {
+  if (!/^\d{10}$/.test(controlNumber)) return null;
+  const cct4 = controlNumber.slice(3, 7);
+  const stripped = cct4.replace(/^0+/, "");
+  const cct2 = stripped.length === 2 ? stripped : cct4.slice(-2);
+  return `${controlNumber.slice(0, 3)}${cct2}${controlNumber.slice(7)}`;
+};
+
 const fetchJpegBytes = async (url, timeoutMs = 15000) => {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -1609,13 +1644,19 @@ const fetchJpegBytes = async (url, timeoutMs = 15000) => {
 
 // =====================================================================
 // GET /api/students/export/photos
-// ZIP en streaming con las fotos de los alumnos en JPEG, nombradas
-// <controlNumber>.jpg. Omite alumnos sin foto y sin numero de control.
+// ZIP en streaming con las fotos de los alumnos en JPEG.
+//   - default:        <controlNumber>.jpg (ZIP fotos-alumnos-<fecha>.zip)
+//   - ?format=ivms:   <ID8>.jpg, ID8 = 8 dígitos YY+SHIFT+CCT2+CONSEC
+//                     (ver buildIvmsId) y foto re-escala a 640x640 JPEG
+//                     (import de caras de iVMS-4200). ZIP
+//                     fotos-ivms-<fecha>.zip.
+// Omite alumnos sin foto y sin numero de control.
 // Mismos filtros opcionales que exportStudentsToExcel.
 // =====================================================================
 const exportStudentPhotos = async (req, res, next) => {
   try {
-    const { status, group, search, school_year_id } = req.query;
+    const { status, group, search, school_year_id, format } = req.query;
+    const isIvms = format === "ivms";
 
     const filter = {
       ...tenantFilter(req),
@@ -1659,10 +1700,9 @@ const exportStudentPhotos = async (req, res, next) => {
         .json({ message: "No hay fotos de alumnos para exportar." });
     }
 
-    const filename = `fotos-alumnos-${new Date().toISOString().slice(0, 10)}.zip`.replace(
-      /[^a-zA-Z0-9.-]/g,
-      "_"
-    );
+    const date = new Date().toISOString().slice(0, 10);
+    const stem = isIvms ? `fotos-ivms-${date}` : `fotos-alumnos-${date}`;
+    const filename = `${stem}.zip`.replace(/[^a-zA-Z0-9.-]/g, "_");
     res.setHeader("Content-Type", "application/zip");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
 
@@ -1677,30 +1717,45 @@ const exportStudentPhotos = async (req, res, next) => {
     });
     archive.pipe(res);
 
-    // super_admin exporta entre escuelas y el controlNumber solo es
-    // único por escuela: se desempata con un sufijo _2, _3…
+    // super_admin exporta entre escuelas y el ID base (controlNumber
+    // o ID8) solo es único por escuela: se desempata con un sufijo
+    // _2, _3…
     const usedNames = new Map();
-    const uniqueName = (controlNumber) => {
-      const count = usedNames.get(controlNumber) || 0;
-      usedNames.set(controlNumber, count + 1);
-      return count === 0
-        ? `${controlNumber}.jpg`
-        : `${controlNumber}_${count + 1}.jpg`;
+    const uniqueName = (base) => {
+      const count = usedNames.get(base) || 0;
+      usedNames.set(base, count + 1);
+      return count === 0 ? `${base}.jpg` : `${base}_${count + 1}.jpg`;
     };
 
     let added = 0;
+    let skipped = 0;
     await photoPool(students, 6, async (s) => {
       try {
-        const jpgUrl = toJpgUrl(s.photoUrl);
+        let jpgUrl;
+        let nameBase;
+        if (isIvms) {
+          nameBase = buildIvmsId(s.controlNumber);
+          if (!nameBase) {
+            skipped++;
+            console.warn(
+              `[students-export-photos] ivms: controlNumber inválido (${s.controlNumber}), alumno omitido`
+            );
+            return;
+          }
+          jpgUrl = toIvmsJpegUrl(s.photoUrl);
+        } else {
+          nameBase = s.controlNumber;
+          jpgUrl = toJpgUrl(s.photoUrl);
+        }
         if (!jpgUrl) return;
         const bytes = await fetchJpegBytes(jpgUrl);
         if (!bytes) {
           console.warn(
-            `[students-export-photos] ${s.controlNumber}: no se pudo convertir a JPEG`
+            `[students-export-photos] ${nameBase}: no se pudo convertir a JPEG`
           );
           return;
         }
-        archive.append(bytes, { name: uniqueName(s.controlNumber) });
+        archive.append(bytes, { name: uniqueName(nameBase) });
         added++;
       } catch (err) {
         console.warn(
@@ -1710,7 +1765,9 @@ const exportStudentPhotos = async (req, res, next) => {
     });
 
     console.log(
-      `[students-export-photos] ${added}/${students.length} fotos en el ZIP`
+      `[students-export-photos] ${added}/${students.length} fotos en el ZIP` +
+        `${isIvms ? " (format=ivms)" : ""}` +
+        `${skipped ? `, ${skipped} omitidas por controlNumber inválido` : ""}`
     );
     await archive.finalize();
   } catch (error) {
