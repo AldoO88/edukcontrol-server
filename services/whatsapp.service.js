@@ -101,6 +101,13 @@ class InvalidPhoneError extends TwilioError {
   }
 }
 
+class TemplateNotFoundError extends TwilioError {
+  constructor(message = "Content SID (template) not found in this Twilio account.") {
+    super("TEMPLATE_NOT_FOUND", message);
+    this.name = "TemplateNotFoundError";
+  }
+}
+
 // Mapea errores de Twilio a nuestros errores semánticos.
 // Twilio lanza RestException con .code (número) y .message.
 // Ver https://www.twilio.com/docs/errors/reference
@@ -116,6 +123,11 @@ const mapTwilioError = (err) => {
   }
   if (code === 63016 || code === 63033) {
     return new TemplateNotApprovedError(msg);
+  }
+  // 21655: el Content SID no existe en esta cuenta (SID equivocado, de otra
+  // cuenta/subcuenta, borrado, o con espacios/saltos de línea en el env var).
+  if (code === 21655) {
+    return new TemplateNotFoundError(msg);
   }
   return new TwilioError(code, msg);
 };
@@ -192,7 +204,8 @@ const sendOtpViaWhatsApp = async (phone, code, purpose = "activation") => {
     };
   } catch (err) {
     console.error(
-      `[whatsapp] sendOtpViaWhatsApp failed purpose=${purpose} to=${to} code=${err?.code} message=${err?.message}`
+      `[whatsapp] sendOtpViaWhatsApp failed purpose=${purpose} to=${to} ` +
+      `contentSid=${contentSid} code=${err?.code} message=${err?.message}`
     );
     throw mapTwilioError(err);
   }
@@ -205,5 +218,6 @@ module.exports = {
   TwilioError,
   ConsentRequiredError,
   TemplateNotApprovedError,
+  TemplateNotFoundError,
   InvalidPhoneError,
 };

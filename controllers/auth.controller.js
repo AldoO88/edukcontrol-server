@@ -557,6 +557,17 @@ const requestActivationController = async (req, res, next) => {
           "OTP service temporarily unavailable. Please contact your school.",
       });
     }
+    if (error instanceof whatsappService.TemplateNotFoundError) {
+      console.error(
+        "[requestActivationController] Twilio 21655: Content SID not found. " +
+          "TWILIO_OTP_TEMPLATE_ID no existe en esta cuenta Twilio " +
+          "(revisar SID, cuenta/subcuenta y espacios en el env var)."
+      );
+      return res.status(503).json({
+        message:
+          "OTP service temporarily unavailable. Please contact your school.",
+      });
+    }
     if (error instanceof whatsappService.InvalidPhoneError) {
       return res.status(400).json({
         message:
@@ -1037,6 +1048,17 @@ const requestPasswordReset = async (req, res, next) => {
     if (error instanceof whatsappService.TemplateNotApprovedError) {
       console.error(
         "[requestPasswordReset] WhatsApp template not approved. Check TWILIO_OTP_TEMPLATE_ID in .env."
+      );
+      return res.status(503).json({
+        message:
+          "OTP service temporarily unavailable. Please try again later.",
+      });
+    }
+    if (error instanceof whatsappService.TemplateNotFoundError) {
+      console.error(
+        "[requestPasswordReset] Twilio 21655: Content SID not found. " +
+          "TWILIO_OTP_TEMPLATE_ID no existe en esta cuenta Twilio " +
+          "(revisar SID, cuenta/subcuenta y espacios en el env var)."
       );
       return res.status(503).json({
         message:

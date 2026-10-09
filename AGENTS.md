@@ -551,6 +551,7 @@ la validación con un warning (no hay callbacks legítimos sin esas vars).
 | `21211` | Invalid 'To' phone number | `400` |
 | `63007` / `63038` | Recipient not opted in / session not found | `451` |
 | `63016` / `63033` | Template not approved / paused | `503` |
+| `21655` | Content SID no existe en la cuenta (revisar `TWILIO_OTP_TEMPLATE_ID`: SID `HX...` de la misma cuenta, sin espacios) | `503` |
 
 ### Archivos clave
 
