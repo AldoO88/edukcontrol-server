@@ -10,6 +10,7 @@ Express + MongoDB backend for **EdukControl**, a multi-tenant SaaS for school at
 - `node scripts/migrate-to-multitenant.js` — one-shot migration to assign existing data to a default school and sync unique compound indexes. **Make a DB backup first**.
 - `node scripts/migrate-guardians-to-collection.js` — extracts embedded `Student.guardians` subdocs into the new `Guardian` collection. **Idempotent** (no-op if already migrated).
 - `node scripts/migrate-logo-to-logoUrl.js` — renames the School `logo` field to `logoUrl`. **Idempotent** (no-op if already migrated).
+- `node scripts/migrate-biometric-id-to-ivms.js --dry-run` — migra `Student.biometricId` de `controlNumber` (10 dígitos) al **ID8 de iVMS-4200** (8 dígitos, ver Convención más abajo). Pre-check de colisiones `{school, biometricId}` que aborta sin escribir; idempotente; `--force` incluye overrides manuales; `--yes` salta la confirmación interactiva. **Ya corrió en producción** (448 alumnos migrados). Correrla de nuevo es un no-op. **Backup antes** en cualquier caso (`mongodump --collection students`).
 - `DRY_RUN=1 node scripts/cleanup-orphan-cloudinary-assets.js` — logs what would be deleted without touching Cloudinary. Drop `DRY_RUN=1` to actually delete. Cleans up orphan assets and old versions in `edukcontrol/schools/<school_id>/`. Run periodically (cron).
 - `node scripts/retry-pending-uploads.js` — processes the queue of uploads that failed all inline retries and were persisted to disk. Run periodically (cron every 5-15 min) or after a Cloudinary outage.
 - `node scripts/cleanup-old-s3-uploads.js` — deletes S3 objects in `pending-uploads/` older than `S3_CLEANUP_MAX_AGE_DAYS` (default 30). Requires `PENDING_UPLOADS_BACKEND=s3`. Complements the S3 lifecycle policy.
@@ -262,7 +263,7 @@ La terminal empuja un `EventNotificationAlert` XML (o JSON si `parameterFormatTy
 - **El parser loguea el body crudo (info level)**. Las primeras capturas reales con una terminal en sitio son la mejor forma de validar que el árbol XML/JSON coincide con la estructura esperada — revisar la consola del server después del primer punch de prueba.
 - **Auth = token en path.** El firmware Hikvision NO permite cabeceras personalizadas. El token vive en el path (`/hikvision/event/<token>`), validado con `crypto.timingSafeEqual` contra `HIKVISION_EVENT_TOKEN`. Es un secreto: la URL completa NO debe quedar en logs de proxy (path token, no query).
 - **Reuso total del flujo de asistencia.** Después de parsear, el controller matchea al alumno con el mismo `$or: [{biometricId}, {rfid_card}, {controlNumber}]` que `device-trigger` y llama a `attendanceService.registerAttendanceEvent`. Eso significa dedup ±60s, alternancia entry/exit, cálculo de late/absent y push notifications funcionan igual que en los demás endpoints.
-- **Cross-tenant ambiguity.** El `$or` con tres campos puede dar más de un match si dos alumnos comparten identificador en distintas escuelas. Mismo patrón que ADMS: `Student.find().limit(2)` y drop con `ambiguous` warning si hay más de uno. Con la convención `biometricId == controlNumber`, una escuela no puede tener dos alumnos con el mismo `biometricId` salvo colisión con un manual override.
+- **Cross-tenant ambiguity.** El `$or` con tres campos puede dar más de un match si dos alumnos comparten identificador en distintas escuelas. Mismo patrón que ADMS: `Student.find().limit(2)` y drop con `ambiguous` warning si hay más de uno. Con la convención `biometricId = ID8` (único por escuela, ver Convención más abajo) una escuela no puede tener dos alumnos con el mismo `biometricId` salvo colisión con un manual override.
 - **`device` se guarda como `hikvision@<MAC o IP>`.** La MAC es más estable que la IP (la IP puede cambiar por DHCP). `controllers/hikvision.controller.js` prefiere MAC; fallback a IP si la MAC no viene en el payload.
 - **Timestamps con offset ISO.** La terminal envía `dateTime` con offset de zona (ej. `2026-09-29T13:31:55-06:00`). El controller parsea con `new Date()` que respeta el offset y queda un `Date` UTC correcto — `attendanceService.isAfterGracePeriod` usa `ADMS_TZ_OFFSET_MINUTES` para convertir de vuelta a local, así que la terminal y el server DEBEN coincidir en zona horaria (idealmente UTC-6 = `ADMS_TZ_OFFSET_MINUTES=-360`).
 
@@ -286,21 +287,24 @@ curl -s -o /dev/null -w "%{http_code}\n" https://<api>/hikvision/event/000000000
 #   el log del servidor — debería aparecer "[hikvision] entry/exit log created ...".
 ```
 
-E2E completo: `node scripts/e2e-hikvision-event.js` (cubre 401, body vacío, body malformado, face XML, dedup, card XML, JSON, sin identificador, verificación de `biometricId == controlNumber`).
+E2E completo: `node scripts/e2e-hikvision-event.js` (cubre 401, body vacío, body malformado, face XML, dedup, card XML, JSON, sin identificador, convención `biometricId` y evento con `employeeNo` = ID8).
 
-## Convención `biometricId` = `controlNumber`
+## Convención `biometricId` = ID8 (Employee ID de iVMS-4200)
 
-Las terminales (ZKTeco ADMS con PIN numérico, Hikvision ISAPI con `employeeNo`) matchean al alumno contra un identificador que **configura el admin al enrollerlo** en la terminal. La convención adoptada es usar `controlNumber` directamente:
+Las terminales (Hikvision ISAPI con `employeeNo`, ZKTeco ADMS con PIN numérico) matchean al alumno contra un identificador que **configura el admin al enrollerlo** en la terminal. La convención vigente es el **ID8**:
 
-- Es 100% numérico (10 dígitos: `YY(2) + SHIFT(1) + CCT4(4) + CONSEC(3)`), aceptado por cualquier firmware que espere un User ID / PIN numérico.
-- Es único por escuela (índice compuesto `{ school, controlNumber }`, secuencia atómica en el pre-save de Student).
-- Es auto-generado — no requiere asignación manual, cero typos.
-- Ya está incluido en los lookups `$or` de los tres endpoints de asistencia (`/api/attendance/device-trigger`, `/iclock/cdata`, `/hikvision/event/:token`), así que los punches resuelven sin necesidad de tocar `biometricId`.
-- Es legible: cuando aparece en el payload crudo (`employeeNoString=2610912001`), es inmediatamente identificable.
+- **ID8 = `YY(2) + SHIFT(1) + CCT2(2) + CONSEC(3)`** = 8 dígitos, derivado del `controlNumber` quitando 2 ceros del CCT (`2410049001` → `24149001`). Fuente única: `utils/ivms-id.js#buildIvmsId` (la usan el export de fotos `?format=ivms`, la migración y el e2e).
+- **Por qué no el `controlNumber` (10 dígitos):** iVMS-4200 limita el Employee ID a 8 dígitos (`1..99999999`, sin cero inicial). El import de fotos `GET /api/students/export/photos?format=ivms` nombraba los archivos `<ID8>.jpg` y las personas creadas en iVMS quedan con ese Employee ID — la terminal manda `employeeNoString=<ID8>` en cada evento, así que `biometricId` tiene que ser el ID8 para que el `$or` matchee.
+- Es 100% numérico, auto-generado, y único por escuela (el `controlNumber` de origen es único por escuela; el mapeo cn→ID8 es inyectivo dentro de una escuela).
+- Sigue siendo legible: `24149001` = ciclo 24, matutino, CCT 0049, alumno 001.
 
-Implementación: el pre-save hook en `models/Student.model.js` autocompleta `this.biometricId = this.controlNumber` si no se especificó en el body. Los alumnos existentes se migraron con `scripts/migrate-biometric-id-from-control-number.js` (idempotente: solo llena `biometricId: null` por default; `--force` sobrescribe manuales).
+**Estado de la migración:**
+- **Aplicada en producción** con `scripts/migrate-biometric-id-to-ivms.js` (448 alumnos: `biometricId` pasó de `controlNumber` a ID8; 0 colisiones; 0 overrides manuales).
+- **El pre-save (`models/Student.model.js`) TODAVÍA autocompleta `biometricId = controlNumber`** — cambio pendiente (5 líneas: asignar `buildIvmsId(controlNumber) || controlNumber`). Hasta ese deploy, **los alumnos nuevos nacen con el ID de 10 dígitos**: en Hikvision NO matchearían un evento ID8 (matchean solo por la clause `controlNumber` del `$or`, que la terminal no manda). **Workaround:** re-correr `node scripts/migrate-biometric-id-to-ivms.js` después de cada alta masiva, o hacer el cambio de pre-save.
+- Los `$or` de los tres endpoints de asistencia (`/api/attendance/device-trigger`, `/iclock/cdata`, `/hikvision/event/:token`) **siguen incluyendo `controlNumber`**, así que punches legacy con el PIN de 10 dígitos (ZKTeco enrolada antes del cambio, pruebas manuales) siguen resolviendo.
+- Overrides manuales siguen posibles (`PUT /api/students/:studentId` con `biometricId` explícito). El índice único `{ school, biometricId }` previene duplicados accidentales.
 
-Un override manual sigue siendo posible (`PUT /api/students/:studentId` con `biometricId` explícito) — útil para casos de excepción. El índice único `{ school, biometricId }` previene duplicados accidentales.
+Historial: la convención anterior era `biometricId = controlNumber` (backfill: `scripts/migrate-biometric-id-from-control-number.js`).
 
 ## Required environment (.env)
 
@@ -377,7 +381,7 @@ El mismo cron que marca ausencias corre después un pase para detectar alumnos q
 - `SchoolYear` (`school`, `name` matching `^\d{4}-\d{4}$`, `startDate`, `endDate`, `isActive`) is the source of truth for school cycles. `Group`, `Enrollment`, `Grade` (denormalized from `Enrollment`), and `TeacherSubject` all reference it via `school_year_id` (ObjectId ref) instead of a raw string. Unique per school: `{ school, name }`.
 - `Student.status` ∈ `active | withdrawn_temp | withdrawn_permanent`.
 - `AttendanceLog.event_type` ∈ `entry | exit`. `AttendanceLog.verificationMode` ∈ `FACE | RFID | MANUAL` (default `RFID` — historic logs all predate facial recognition). `AttendanceLog.snapshotUrl` is the camera capture of the check-in event, not the student's reference photo (that one is `Student.photoUrl`). `AttendanceLog.status` ∈ `on_time | late | absent | null` (only set for entry events; `null` for exit events and legacy records).
-- `Student.biometricId` is the User ID / PIN the student is enrolled under in the ZKTeco terminal. Stored as `String` (leading zeros are significant: `"0042" ≠ "42"`). `Student.isFaceEnrolled` marks that the face template was actually loaded onto the device, as distinct from merely having a `biometricId` assigned.
+- `Student.biometricId` es el Employee ID / PIN con el que el alumno está dado de alta en la terminal. **Convención vigente: ID8 de iVMS-4200** (8 dígitos, derivado del controlNumber — ver "Convención `biometricId` = ID8"). Stored as `String` (leading zeros are significant: `"0042" ≠ "42"`). Ojo: el pre-save todavía autocompleta `controlNumber` (10 dígitos) en alumnos nuevos — pendiente el cambio. `Student.isFaceEnrolled` marks that the face template was actually loaded onto the device, as distinct from merely having a `biometricId` assigned.
 - `Group.grade` ∈ `{1, 2, 3}`. `Group.type` ∈ `regular | taller` (default `regular`). Los grupos `taller` son secciones transversales de Tecnología que mezclan alumnos de varios grupos de origen del mismo grado (el grupo de origen se dispersa en el bloque de taller; cada alumno pertenece a UN solo taller vía `Student.workshop_group_id`).
 - `Student.workshop_group_id` (ref `Group`) apunta al grupo taller del alumno. Se elige UNA sola vez al ingresar a primer grado y se conserva en ciclos siguientes: al promover, `students.controller.js#promoteStudent` lo re-apunta al grupo taller del mismo nombre de sección en el nuevo grado/ciclo. `enrollments.controller.js` NO lo toca.
 - `Enrollment.cycle_status` ∈ `enrolled | withdrawn | graduated | transferred`.

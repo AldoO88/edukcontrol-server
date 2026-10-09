@@ -37,6 +37,7 @@ const mongoose = require("mongoose");
 
 const Student = require("../models/Student.model");
 const AttendanceLog = require("../models/AttendanceLog.model");
+const { buildIvmsId } = require("../utils/ivms-id");
 
 const API_URL = (process.env.API_URL || "http://localhost:5050").replace(/\/$/, "");
 const TOKEN = process.env.HIKVISION_EVENT_TOKEN;
@@ -232,7 +233,7 @@ async function main() {
   console.log(
     `\n[i] Fixture student: ${student.controlNumber} (${student.first_name} ${student.last_name}) _id=${student._id}`
   );
-  console.log(`[i] biometricId actual: ${student.biometricId} (debe ser igual a controlNumber después del deploy)`);
+  console.log(`[i] biometricId actual: ${student.biometricId} (convención nueva: ID8 = ${buildIvmsId(student.controlNumber) ?? "n/a"})`);
 
   if (DRY_RUN) {
     console.log("[dry-run] saltando tests que mutan DB y haciendo solo los primeros 3 + sanity.");
@@ -368,13 +369,40 @@ async function main() {
     bad("evento sin identificador", `status=${r9.status} body=${r9.body.slice(0, 200)}`);
   }
 
-  // ── 10) Convención biometricId == controlNumber ──────────────────────
-  console.log("\n[10] Convención biometricId == controlNumber");
+  // ── 10) Convención biometricId = ID8 (Employee ID de iVMS-4200) ──────
+  // Transicional: los alumnos migrados con scripts/migrate-biometric-id-to-ivms.js
+  // llevan el ID8 (8 dígitos); los creados después del migrate pero con el
+  // pre-save viejo todavía nacen con controlNumber (10 dígitos) y matchean
+  // por la clause `controlNumber` del $or. Ambos son válidos mientras no
+  // cambie el pre-save.
+  console.log("\n[10] Convención biometricId (ID8 o controlNumber)");
   const fresh = await Student.findOne({ _id: student._id }).select("biometricId controlNumber");
-  if (fresh && fresh.biometricId === fresh.controlNumber) {
-    ok("biometricId == controlNumber", `biometricId=${fresh.biometricId}`);
+  const expectedId8 = fresh ? buildIvmsId(fresh.controlNumber) : null;
+  if (fresh && fresh.biometricId === expectedId8 && expectedId8 !== null) {
+    ok("biometricId == ID8 (convención iVMS)", `biometricId=${fresh.biometricId}`);
+  } else if (fresh && fresh.biometricId === fresh.controlNumber) {
+    ok("biometricId == controlNumber (pre-save viejo, matchea por $or)", `biometricId=${fresh.biometricId}`);
   } else {
-    bad("convención biometricId", `bio=${fresh?.biometricId} cn=${fresh?.controlNumber}`);
+    bad("convención biometricId", `bio=${fresh?.biometricId} cn=${fresh?.controlNumber} id8=${expectedId8}`);
+  }
+
+  // ── 11) Evento con employeeNo = ID8 → OK:1 (match por biometricId) ───
+  // Solo aplica si el fixture ya fue migrado (biometricId == ID8): con el
+  // pre-save viejo un alumno nuevo no matchearía un evento ID8, que es
+  // exactamente lo que la migración corrige.
+  console.log("\n[11] Evento con employeeNo = ID8");
+  if (fresh && expectedId8 && fresh.biometricId === expectedId8) {
+    const futureId8 = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+    const r11 = await post(`/hikvision/event/${TOKEN}`, {
+      body: xmlEvent({ employeeNo: expectedId8, minor: 75, dateTime: futureId8 }),
+    });
+    if (r11.status === 200 && r11.body.trim() === "OK: 1") {
+      ok("evento ID8 → 200 OK: 1", `employeeNo=${expectedId8}`);
+    } else {
+      bad("evento ID8", `status=${r11.status} body=${r11.body.slice(0, 200)}`);
+    }
+  } else {
+    console.log("  - saltado: el fixture no tiene biometricId = ID8 (corré scripts/migrate-biometric-id-to-ivms.js)");
   }
 
   // ── Resumen ───────────────────────────────────────────────────────────

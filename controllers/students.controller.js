@@ -14,6 +14,7 @@ const {
   saveForRetry,
 } = require("../services/cloudinary-upload.service");
 const { saveWithControlNumberRetry } = require("../services/control-number.service");
+const { buildIvmsId } = require("../utils/ivms-id");
 // archiver v8 es ESM-only (type: module). En este proyecto CommonJS con
 // Node 20, require() directo revienta con ERR_REQUIRE_ESM — se carga con
 // import() dinámico (permitido en CJS desde Node 12), cacheado.
@@ -1611,20 +1612,8 @@ const toIvmsJpegUrl = (url) => {
   );
 };
 
-// ID8 para iVMS-4200: YY(2) + SHIFT(1) + CCT2(2) + CONSEC(3) = 8 dígitos.
-// Ej.: controlNumber "2610049001" (CCT 0049) → "26149001".
-// CCT2 = el CCT4 sin ceros a la izquierda ("0049" → "49"); si eso no
-// da exactamente 2 dígitos (otra escuela con CCT distinto), se usan
-// los últimos 2 del CCT4 para garantizar siempre 8. Devuelve null si
-// el controlNumber no tiene el formato de 10 dígitos (overrides
-// manuales) — en ese caso el alumno se omite del export ivms.
-const buildIvmsId = (controlNumber) => {
-  if (!/^\d{10}$/.test(controlNumber)) return null;
-  const cct4 = controlNumber.slice(3, 7);
-  const stripped = cct4.replace(/^0+/, "");
-  const cct2 = stripped.length === 2 ? stripped : cct4.slice(-2);
-  return `${controlNumber.slice(0, 3)}${cct2}${controlNumber.slice(7)}`;
-};
+// ID8 para iVMS-4200 — ver utils/ivms-id.js (fuente única, también la
+// usa la migración scripts/migrate-biometric-id-to-ivms.js).
 
 const fetchJpegBytes = async (url, timeoutMs = 15000) => {
   const controller = new AbortController();
