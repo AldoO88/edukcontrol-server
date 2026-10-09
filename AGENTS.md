@@ -233,7 +233,26 @@ Mismo valor de `<HIKVISION_EVENT_TOKEN>` va en el `.env`/Render del backend. Gen
 
 ### Protocolo esperado
 
-La terminal empuja un `EventNotificationAlert` XML (o JSON si `parameterFormatType=JSON`) por cada evento de autenticación. Ejemplo de body:
+La terminal empuja eventos en **tres formatos posibles** (el parser soporta los tres):
+
+1. **`multipart/form-data`** (formato REAL de las DS-K1T3xx en campo, verificado en Render 2026-10-09). El firmware envía un body MIME con boundary `MIME_boundary` y un campo `AccessControllerEvent` cuyo contenido es JSON:
+
+   ```
+   --MIME_boundary
+   Content-Disposition: form-data; name="AccessControllerEvent"
+   Content-Type: application/json
+
+   { "ipAddress": "...", "eventType": "AccessControllerEvent", "AccessControllerEvent": { "employeeNoString": "26149001", ... } }
+   --MIME_boundary--
+   ```
+
+   `parseBody` detecta el `--` inicial, extrae el boundary de la primera línea, splittea las partes y parsea el JSON del campo. Los **heartbeats** llegan en el mismo multipart (`eventType: "heartBeat"`, sin `employeeNoString`/`cardNo`) — se ackean `200 OK: 0` sin crear log.
+
+2. **XML** (`EventNotificationAlert`) si `parameterFormatType=XML`.
+
+3. **JSON** directo si `parameterFormatType=JSON`.
+
+Ejemplo del body XML:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -257,10 +276,12 @@ La terminal empuja un `EventNotificationAlert` XML (o JSON si `parameterFormatTy
 
 `majorEventType=5` (Access Event) es el único que genera un `AttendanceLog`. Otros major (alarmas, tamper, etc.) llegan pero el backend los registra y acka sin crear log. `subEventType` mapea a `verificationMode`: `75/76` → `FACE`; `1..5` → `RFID`; cualquier otro con `cardNo` → `RFID`, sin `cardNo` → `FACE` (fallback).
 
+**Tarjeta ligada a un person:** cuando la tarjeta RFID está vinculada a un person ya enrolado en la terminal (Employee ID = ID8), el evento que viaja al servidor trae el **`employeeNoString`** (= ID8 del alumno), no el número crudo de la tarjeta. El backend matchea por `biometricId`. El `cardNo` puede venir adicional en el mismo evento, pero el identificador principal es el Employee Number.
+
 ### Reglas que son fáciles de romper
 
 - **Siempre responder `200` con `text/plain`.** Un 4xx/5xx (o un body JSON) hace que la terminal reenvíe el evento en loop hasta llenar su buffer. Lo mismo que ADMS. Token inválido → `401 text/plain`; cualquier otra condición (evento sin identificador, alumno no matcheado, duplicado, JSON malformado) → `200 OK: 0` o `200 OK: 1`.
-- **El parser loguea el body crudo (info level)**. Las primeras capturas reales con una terminal en sitio son la mejor forma de validar que el árbol XML/JSON coincide con la estructura esperada — revisar la consola del server después del primer punch de prueba.
+- **El parser loguea el body crudo (info level)** — pero para `multipart/form-data` solo los primeros ~200 bytes (el JSON parseado ya se loguea aparte; el blob completo es ruido cada 30s por terminal). Para XML/JSON se loguea completo (cap 2000 bytes). Las primeras capturas reales con una terminal en sitio son la mejor forma de validar que el árbol XML/JSON coincide con la estructura esperada — revisar la consola del server después del primer punch de prueba.
 - **Auth = token en path.** El firmware Hikvision NO permite cabeceras personalizadas. El token vive en el path (`/hikvision/event/<token>`), validado con `crypto.timingSafeEqual` contra `HIKVISION_EVENT_TOKEN`. Es un secreto: la URL completa NO debe quedar en logs de proxy (path token, no query).
 - **Reuso total del flujo de asistencia.** Después de parsear, el controller matchea al alumno con el mismo `$or: [{biometricId}, {rfid_card}, {controlNumber}]` que `device-trigger` y llama a `attendanceService.registerAttendanceEvent`. Eso significa dedup ±60s, alternancia entry/exit, cálculo de late/absent y push notifications funcionan igual que en los demás endpoints.
 - **Cross-tenant ambiguity.** El `$or` con tres campos puede dar más de un match si dos alumnos comparten identificador en distintas escuelas. Mismo patrón que ADMS: `Student.find().limit(2)` y drop con `ambiguous` warning si hay más de uno. Con la convención `biometricId = ID8` (único por escuela, ver Convención más abajo) una escuela no puede tener dos alumnos con el mismo `biometricId` salvo colisión con un manual override.
@@ -287,7 +308,7 @@ curl -s -o /dev/null -w "%{http_code}\n" https://<api>/hikvision/event/000000000
 #   el log del servidor — debería aparecer "[hikvision] entry/exit log created ...".
 ```
 
-E2E completo: `node scripts/e2e-hikvision-event.js` (cubre 401, body vacío, body malformado, face XML, dedup, card XML, JSON, sin identificador, convención `biometricId` y evento con `employeeNo` = ID8).
+E2E completo: `node scripts/e2e-hikvision-event.js` (cubre 401, body vacío, body malformado, face XML, dedup, card XML, JSON, sin identificador, convención `biometricId`, evento con `employeeNo` = ID8, **multipart real DS-K1T3xx** y multipart heartBeat).
 
 ## Convención `biometricId` = ID8 (Employee ID de iVMS-4200)
 

@@ -103,9 +103,10 @@ const verifyEventToken = (req, res, next) => {
 };
 
 // ── Parseo del body crudo ────────────────────────────────────────────────
-// Acepta: (a) XML string, (b) JSON string, (c) objeto ya parseado por
-// express.json() en middlewares globales. Devuelve un objeto normalizado o
-// null si no se pudo parsear.
+// Acepta: (a) XML string, (b) JSON string, (c) multipart/form-data con
+// campo AccessControllerEvent (formato real de DS-K1T3xx con
+// parameterFormatType=JSON), (d) objeto ya parseado por express.json().
+// Devuelve un objeto normalizado o null si no se pudo parsear.
 const parseBody = (raw) => {
   if (raw === null || raw === undefined || raw === "") return null;
 
@@ -114,6 +115,12 @@ const parseBody = (raw) => {
 
   const text = String(raw).trim();
   if (text === "") return null;
+
+  // multipart/form-data: el firmware DS-K1T3xx envía --<boundary> + headers
+  // + cuerpo JSON del campo AccessControllerEvent.
+  if (text.startsWith("--")) {
+    return parseMultipartBody(text);
+  }
 
   // JSON puro
   if (text.startsWith("{")) {
@@ -146,6 +153,53 @@ const parseBody = (raw) => {
     return out;
   }
 
+  return null;
+};
+
+// Parsea un body multipart/form-data crudo (sin librería). Extrae el primer
+// campo cuyo body sea JSON (application/json o empiece con "{"). El boundary
+// se toma de la primera línea "--<boundary>".
+const parseMultipartBody = (text) => {
+  // Primera línea: --boundary (posible \r\n o \n)
+  const firstLineEnd = text.search(/\r?\n/);
+  const firstLine = firstLineEnd === -1 ? text : text.slice(0, firstLineEnd);
+  const boundary = firstLine.replace(/^--/, "").trim();
+  if (!boundary) {
+    console.warn("[hikvision] multipart without boundary");
+    return null;
+  }
+
+  // Separar partes por --boundary (tolerante a \r\n y \n)
+  const parts = text.split(`--${boundary}`);
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (!trimmed || trimmed === "--") continue;
+
+    // headers hasta la primera línea vacía
+    const sep = trimmed.search(/\r?\n\r?\n/);
+    if (sep === -1) continue;
+    const headers = trimmed.slice(0, sep);
+    const body = trimmed.slice(sep).trim();
+
+    if (!body || !body.startsWith("{")) continue;
+
+    try {
+      const parsed = JSON.parse(body);
+      // Loguea el nombre del campo si viene (útil para depurar)
+      const nameMatch = headers.match(/name="([^"]+)"/);
+      const fieldName = nameMatch ? nameMatch[1] : "unknown";
+      console.log(
+        `[hikvision] multipart field "${fieldName}" parsed (${body.length} bytes)`
+      );
+      return parsed;
+    } catch (e) {
+      console.warn(`[hikvision] multipart JSON parse failed: ${e.message}`);
+    }
+  }
+
+  console.warn(
+    `[hikvision] multipart: no JSON field found (boundary=${boundary}, parts=${parts.length})`
+  );
   return null;
 };
 
@@ -280,14 +334,23 @@ const handleHikvisionEvent = [
     const raw = req.body;
     const providedTokenLen = String(req.params.token || "").length;
 
-    // Log SIEMPRE del body crudo (las primeras ejecuciones son críticas para
-    // ajustar el parser al formato real del firmware de esta escuela).
-    console.log(
-      `[hikvision] event push (token_len=${providedTokenLen}, content-type=${req.headers["content-type"] || "<none>"}):`,
-      typeof raw === "string"
-        ? raw.slice(0, 2000) // cap para no reventar logs
-        : JSON.stringify(raw).slice(0, 2000)
-    );
+    // Log del body crudo. Para multipart solo logueamos los primeros bytes
+    // (el JSON ya se loguea al parsear la parte) — volcar el blob completo
+    // es ruido (30s x N terminales).
+    const contentType = req.headers["content-type"] || "<none>";
+    const isMultipart = contentType.includes("multipart/");
+    if (isMultipart) {
+      console.log(
+        `[hikvision] event push multipart (token_len=${providedTokenLen}): ${typeof raw === "string" ? raw.slice(0, 200) : "<object>"}…`
+      );
+    } else {
+      console.log(
+        `[hikvision] event push (token_len=${providedTokenLen}, content-type=${contentType}):`,
+        typeof raw === "string"
+          ? raw.slice(0, 2000)
+          : JSON.stringify(raw).slice(0, 2000)
+      );
+    }
 
     let parsed;
     try {

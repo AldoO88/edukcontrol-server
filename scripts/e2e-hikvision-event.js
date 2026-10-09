@@ -157,6 +157,51 @@ const jsonEvent = ({ employeeNo, cardNo = "", minor = 75, dateTime = new Date().
     },
   });
 
+// Multipart/form-data real del firmware DS-K1T3xx (boundary=MIME_boundary,
+// campo AccessControllerEvent con JSON). Réplica exacta de la captura de
+// Render (2026-10-09).
+const multipartEvent = ({
+  employeeNo,
+  cardNo = "",
+  ipAddress = "192.168.2.148",
+  mac = "88:de:39:37:6b:ed",
+  dateTime = new Date().toISOString(),
+  minor = 75,
+} = {}) => {
+  const inner = {
+    ipAddress,
+    portNo: 80,
+    protocol: "HTTPS",
+    macAddress: mac,
+    channelID: 1,
+    dateTime,
+    activePostCount: 1,
+    eventType: "AccessControllerEvent",
+    eventState: "active",
+    eventDescription: "Access Controller Event",
+    AccessControllerEvent: {
+      majorEventType: 5,
+      subEventType: minor,
+      name: minor === 75 ? "Face Authentication" : "Card Authentication",
+      employeeNoString: String(employeeNo),
+      ...(cardNo ? { cardNo } : {}),
+      doorNo: 1,
+    },
+  };
+  const jsonBody = JSON.stringify(inner, null, "\t");
+  const boundary = "MIME_boundary";
+  return {
+    contentType: `multipart/form-data; boundary=${boundary}`,
+    body:
+      `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="AccessControllerEvent"\r\n` +
+      `Content-Type: application/json\r\n` +
+      `\r\n` +
+      `${jsonBody}\r\n` +
+      `--${boundary}--\r\n`,
+  };
+};
+
 // ── Tests ────────────────────────────────────────────────────────────────
 async function main() {
   console.log(`[e2e-hikvision] API_URL: ${API_URL}`);
@@ -403,6 +448,75 @@ async function main() {
     }
   } else {
     console.log("  - saltado: el fixture no tiene biometricId = ID8 (corré scripts/migrate-biometric-id-to-ivms.js)");
+  }
+
+  // ── 12) multipart/form-data real (formato DS-K1T3xx en campo) ─────────
+  // Réplica exacta de la captura de Render: boundary=MIME_boundary,
+  // campo AccessControllerEvent con JSON. Sin este parser el evento real
+  // de la terminal jamás se podría leer (major=0, minor=0, sin employeeNo).
+  console.log("\n[12] multipart/form-data real (DS-K1T3xx)");
+  const futureMp = new Date(Date.now() + 45 * 60 * 1000).toISOString();
+  const mp = multipartEvent({
+    employeeNo: student.biometricId || student.controlNumber,
+    minor: 75,
+    dateTime: futureMp,
+  });
+  const r12 = await post(`/hikvision/event/${TOKEN}`, {
+    body: mp.body,
+    contentType: mp.contentType,
+  });
+  if (r12.status === 200 && r12.body.trim() === "OK: 1") {
+    ok("multipart face → 200 OK: 1", `body="${r12.body.trim()}"`);
+  } else {
+    bad("multipart face", `status=${r12.status} body=${r12.body.slice(0, 200)}`);
+  }
+  const logMp = await AttendanceLog.findOne({
+    student_id: student._id,
+    event_time: { $gte: yesterday },
+  })
+    .sort({ event_time: -1 })
+    .select("verificationMode device");
+  if (logMp && logMp.verificationMode === "FACE" && /^hikvision@/.test(logMp.device)) {
+    ok("multipart log FACE", `device=${logMp.device}`);
+  } else {
+    bad("multipart log", logMp ? `mode=${logMp.verificationMode}` : "no log");
+  }
+
+  // ── 13) multipart heartBeat (solo ack 200, sin log nuevo) ─────────────
+  // El firmware manda heartbeats cada 30s en el mismo multipart. No deben
+  // crear log ni fallar el parseo.
+  console.log("\n[13] multipart heartBeat");
+  const mpHb = multipartEvent({ employeeNo: "", minor: 0, dateTime: futureMp });
+  // heartBeat real NO trae employeeNo — armamos a mano el inner sin campos
+  const hbBody =
+    `--MIME_boundary\r\n` +
+    `Content-Disposition: form-data; name="AccessControllerEvent"\r\n` +
+    `Content-Type: application/json\r\n\r\n` +
+    JSON.stringify(
+      {
+        ipAddress: "192.168.2.148",
+        portNo: 80,
+        protocol: "HTTPS",
+        macAddress: "88:de:39:37:6b:ed",
+        channelID: 1,
+        dateTime: futureMp,
+        activePostCount: 1,
+        eventType: "heartBeat",
+        eventState: "active",
+        eventDescription: "heartBeat",
+      },
+      null,
+      "\t"
+    ) +
+    `\r\n--MIME_boundary--\r\n`;
+  const r13 = await post(`/hikvision/event/${TOKEN}`, {
+    body: hbBody,
+    contentType: mpHb.contentType,
+  });
+  if (r13.status === 200 && r13.body.trim() === "OK: 0") {
+    ok("multipart heartBeat → 200 OK: 0");
+  } else {
+    bad("multipart heartBeat", `status=${r13.status} body=${r13.body.slice(0, 200)}`);
   }
 
   // ── Resumen ───────────────────────────────────────────────────────────
