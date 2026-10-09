@@ -29,4 +29,29 @@ const buildIvmsId = (controlNumber) => {
   return `${controlNumber.slice(0, 3)}${cct2}${controlNumber.slice(7)}`;
 };
 
-module.exports = { buildIvmsId };
+// Name del patrón de foto de iVMS-4200 "Person ID_Name": apellido(s) +
+// espacio + nombre, en MAYÚSCULAS y sin acentos ni caracteres fuera de
+// [A-Za-z0-9 ] (ej. "Lopez Garcia" + "Pedro" → "LOPEZ GARCIA PEDRO").
+// La doc de Hikvision solo exige que el Person ID del filename coincida
+// con la persona importada; el Name completa el patrón.
+const sanitizePhotoNamePart = (lastName, firstName) =>
+  `${lastName ?? ""} ${firstName ?? ""}`
+    .normalize("NFD") // separa tildes/ñ en base + combinante
+    .replace(/[\u0300-\u036f]/g, "") // quita los combinantes (García→Garcia, Ñ→N)
+    .replace(/[^A-Za-z0-9 ]/g, " ") // resto de símbolos → espacio
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
+
+// Filename base (sin extensión) de la foto iVMS: "26149001_LOPEZ GARCIA PEDRO".
+// Devuelve null si no hay ID8 derivable o el nombre queda vacío — en ese
+// caso el alumno se omite del export.
+const buildIvmsPhotoName = (controlNumber, lastName, firstName) => {
+  const id8 = buildIvmsId(controlNumber);
+  if (!id8) return null;
+  const name = sanitizePhotoNamePart(lastName, firstName);
+  if (!name) return null;
+  return `${id8}_${name}`;
+};
+
+module.exports = { buildIvmsId, buildIvmsPhotoName };

@@ -14,7 +14,7 @@ const {
   saveForRetry,
 } = require("../services/cloudinary-upload.service");
 const { saveWithControlNumberRetry } = require("../services/control-number.service");
-const { buildIvmsId } = require("../utils/ivms-id");
+const { buildIvmsPhotoName } = require("../utils/ivms-id");
 // archiver v8 es ESM-only (type: module). En este proyecto CommonJS con
 // Node 20, require() directo revienta con ERR_REQUIRE_ESM — se carga con
 // import() dinámico (permitido en CJS desde Node 12), cacheado.
@@ -1635,9 +1635,13 @@ const fetchJpegBytes = async (url, timeoutMs = 15000) => {
 // GET /api/students/export/photos
 // ZIP en streaming con las fotos de los alumnos en JPEG.
 //   - default:        <controlNumber>.jpg (ZIP fotos-alumnos-<fecha>.zip)
-//   - ?format=ivms:   <ID8>.jpg, ID8 = 8 dígitos YY+SHIFT+CCT2+CONSEC
-//                     (ver buildIvmsId) y foto re-escala a 640x640 JPEG
-//                     (import de caras de iVMS-4200). ZIP
+//   - ?format=ivms:   <ID8>_<APELLIDO NOMBRE>.jpeg — patrón "Person
+//                     ID_Name" que exige iVMS-4200 para el import de
+//                     caras (ID8 = 8 dígitos YY+SHIFT+CCT2+CONSEC, ver
+//                     utils/ivms-id.js; Name = apellido(s) + nombre en
+//                     MAYÚSCULAS sin acentos, ej.
+//                     "26149001_LOPEZ GARCIA PEDRO.jpeg") y foto
+//                     re-escala a 640x640 JPEG. ZIP
 //                     fotos-ivms-<fecha>.zip.
 // Omite alumnos sin foto y sin numero de control.
 // Mismos filtros opcionales que exportStudentsToExcel.
@@ -1708,12 +1712,14 @@ const exportStudentPhotos = async (req, res, next) => {
 
     // super_admin exporta entre escuelas y el ID base (controlNumber
     // o ID8) solo es único por escuela: se desempata con un sufijo
-    // _2, _3…
+    // _2, _3… (va DESPUÉS del Name — el ID antes del primer "_"
+    // queda intacto, iVMS sigue parseando el Person ID).
+    const ext = isIvms ? ".jpeg" : ".jpg";
     const usedNames = new Map();
     const uniqueName = (base) => {
       const count = usedNames.get(base) || 0;
       usedNames.set(base, count + 1);
-      return count === 0 ? `${base}.jpg` : `${base}_${count + 1}.jpg`;
+      return count === 0 ? `${base}${ext}` : `${base}_${count + 1}${ext}`;
     };
 
     let added = 0;
@@ -1723,11 +1729,15 @@ const exportStudentPhotos = async (req, res, next) => {
         let jpgUrl;
         let nameBase;
         if (isIvms) {
-          nameBase = buildIvmsId(s.controlNumber);
+          nameBase = buildIvmsPhotoName(
+            s.controlNumber,
+            s.last_name,
+            s.first_name
+          );
           if (!nameBase) {
             skipped++;
             console.warn(
-              `[students-export-photos] ivms: controlNumber inválido (${s.controlNumber}), alumno omitido`
+              `[students-export-photos] ivms: no se pudo armar el filename (controlNumber=${s.controlNumber}, nombre=${s.last_name} ${s.first_name}), alumno omitido`
             );
             return;
           }
