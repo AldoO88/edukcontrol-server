@@ -7,14 +7,15 @@
 //     Twilio manda un POST form-encoded con campos como:
 //       MessageSid, MessageStatus, ErrorCode, ErrorMessage, To, From
 //     Configurar TWILIO_STATUS_CALLBACK_URL en .env apuntando a
-//     /webhooks/twilio/whatsapp-status.
+//     /auth/webhooks/twilio/whatsapp-status.
 // =====================================================================
 
 const User = require("../models/User.model");
 const Guardian = require("../models/Guardian.model");
 const whatsappService = require("../services/whatsapp.service");
 
-// POST /webhooks/twilio/whatsapp-status
+// POST /auth/webhooks/twilio/whatsapp-status
+// (la firma X-Twilio-Signature se valida en la ruta, antes de llegar aquí)
 // Body (form-encoded, Twilio default):
 //   MessageSid   — ID único del mensaje
 //   MessageStatus — queued | sent | delivered | read | failed | undelivered

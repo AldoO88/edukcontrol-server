@@ -537,6 +537,13 @@ reporta `failed`/`undelivered` con código `63007` (recipient not opted-in)
 o `63038` (session not found), el handler sincroniza `opted_in = false`
 en `User` y `Guardian` para evitar que se acumulen reintentos en vano.
 
+Path real: **`POST /auth/webhooks/twilio/whatsapp-status`** (GET misma URL =
+health check). El POST **valida `X-Twilio-Signature`** con
+`twilio.validateRequest(TWILIO_AUTH_TOKEN, …, TWILIO_STATUS_CALLBACK_URL, req.body)`
+en `routes/auth-webhooks.routes.js#verifyTwilioSignature` — firma inválida →
+`403`. Si faltan `TWILIO_AUTH_TOKEN` o `TWILIO_STATUS_CALLBACK_URL` se omite
+la validación con un warning (no hay callbacks legítimos sin esas vars).
+
 ### Códigos de error Twilio manejados
 
 | Código | Significado | Mapeo HTTP |
