@@ -61,6 +61,15 @@ const groupSchema = new Schema(
       ref: "User",
       default: null,
     },
+    // Grupo vigente. Lo usan los dos pases del cron de asistencia
+    // (markAbsencesForSchool / runExitCheckForSchool) para filtrar grupos
+    // activos — sin este campo el filtro `{ isActive: true }` no matcheaba
+    // NINGÚN grupo y el cron nunca marcaba ausencias. Backfill para los
+    // docs preexistentes: scripts/backfill-group-isactive.js.
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
   },
   {
     timestamps: true,
