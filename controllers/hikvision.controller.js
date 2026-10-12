@@ -439,7 +439,7 @@ const handleHikvisionEvent = [
         );
       } else {
         console.log(
-          `[hikvision] duplicate ${eventType} log for student ${student.controlNumber} within ±60s — reusing existing log`
+          `[hikvision] duplicate ${eventType} log for student ${student.controlNumber} within cross-device window — reusing existing log`
         );
       }
 

@@ -18,7 +18,35 @@ const cache = require("./cache.service");
 // dispositivo se consideran el mismo evento. Las terminales ADMS reenvían el
 // lote completo cuando no reciben un 200, y algunos lectores mandan doble
 // pulso; sin esta ventana cada reintento duplicaría el log y la notificación.
+// (Queda subsumida por la ventana cross-device de abajo, pero se conserva
+// como referencia del dedup original ±60 s.)
 const DUPLICATE_WINDOW_MS = 60 * 1000;
+
+// Ventana cross-device de duplicados (5 min por defecto, configurable con
+// ATTENDANCE_DEDUP_WINDOW_MIN): si el mismo alumno vuelve a pasar la
+// credencial o el rostro — en el MISMO o en OTRO dispositivo — dentro de
+// esta ventana, el tap se trata como duplicado y NO crea un segundo log.
+// Cubre el caso real de una puerta con lector RFID + terminal facial: la
+// tarjeta registra el `entry` y la cara vuelve a verificar al alumno
+// segundos después; sin esta regla la alternancia automática creaba un
+// `exit` falso a los N segundos de haber entrado.
+//
+// Excepción: si el log reciente es un `absent` marcado por el cron, el tap
+// SÍ se procesa — es el late-arrival que debe revertir absent → on_time
+// (suprimirlo dejaría al alumno ausente aunque hubiera pasado el lector).
+const getCrossDeviceWindowMs = () => {
+  const parsed = parseInt(process.env.ATTENDANCE_DEDUP_WINDOW_MIN, 10);
+  const minutes = Number.isFinite(parsed) && parsed > 0 ? parsed : 5;
+  return minutes * 60 * 1000;
+};
+
+// Tolerancia máxima para aceptar un `event_time` "a futuro" mandado por un
+// dispositivo. Un reloj desfasado o una zona horaria mal configurada (ej. el
+// bug +2h de las terminales Hikvision con offset UTC-8) estampa fechas por
+// delante del servidor; una fecha futura jamás es legítima y rompe grace
+// period, cron y alternancia. Si event_time supera al reloj del servidor en
+// más de esta tolerancia, se clampa al reloj del servidor.
+const FUTURE_TOLERANCE_MS = 5 * 60 * 1000;
 
 // "HH:mm" → minutos desde medianoche. Helper local para no acoplar al modelo.
 const toMinutes = (hhmm) => {
@@ -63,6 +91,9 @@ const determineNextType = async (studentId, eventTime = new Date()) => {
 
 // Busca un log equivalente (mismo alumno, mismo dispositivo, ±1 min) para no
 // duplicar en reintentos del dispositivo. Devuelve el log existente o null.
+// Nota: el flujo principal (registerAttendanceEvent) ya NO usa esta función —
+// la reemplazó la ventana cross-device de 5 min (mismo alumno, cualquier
+// dispositivo). Se conserva exportada por compatibilidad con scripts/e2e.
 const findRecentDuplicate = async (studentId, device, eventTime) => {
   const from = new Date(eventTime.getTime() - DUPLICATE_WINDOW_MS);
   const to = new Date(eventTime.getTime() + DUPLICATE_WINDOW_MS);
@@ -419,6 +450,15 @@ const resolveLateArrival = async ({
   return { log, wasAbsenceOverride: false, duplicate: false };
 };
 
+// Cola por alumno: serializa el procesamiento de taps del MISMO alumno.
+// En una puerta con lector RFID + terminal facial, la tarjeta y el rostro
+// pueden llegar al servidor con menos de 1 s de diferencia; sin esta cola
+// las dos peticiones concurrentes consultarían los duplicados al mismo
+// tiempo, no verían el log recién creado y escribirían DOS documentos
+// (race condition). Cada alumno se procesa en cadena (Promise) y las
+// colas de distintos alumnos corren en paralelo — no hay bloqueo global.
+const studentQueues = new Map();
+
 // Registra un evento de asistencia completo.
 // El `school` se desnormaliza desde el estudiante (el caller ya validó que
 // exista) para acelerar las queries tenant-scoped.
@@ -426,33 +466,121 @@ const resolveLateArrival = async ({
 // `duplicate: true` significa que se reutilizó un log existente y NO se volvió
 // a notificar. `wasAbsenceOverride: true` significa que se actualizó un
 // absent→on_time (el alumno pasó el lector después del corte de gracia).
-const registerAttendanceEvent = async ({
+//
+// Entrada pública: encola bajo el lock del alumno y delega en
+// processAttendanceEvent (el núcleo, siempre corre serializado por alumno).
+const registerAttendanceEvent = async (params) => {
+  const key = String(params.student._id);
+  const previous = studentQueues.get(key) || Promise.resolve();
+  const run = previous
+    .catch(() => {}) // un error de la tap anterior no debe impedir la siguiente
+    .then(() => processAttendanceEvent(params));
+  studentQueues.set(key, run);
+  try {
+    return await run;
+  } finally {
+    // Solo limpiar si nadie encadenó otra tap encima de esta.
+    if (studentQueues.get(key) === run) studentQueues.delete(key);
+  }
+};
+
+// Núcleo del registro de asistencia (corre SIEMPRE bajo el lock del alumno).
+const processAttendanceEvent = async ({
   student,
   eventTime,
   device,
   verificationMode,
   snapshotUrl = null,
 }) => {
-  const existing = await findRecentDuplicate(student._id, device, eventTime);
-  if (existing) {
+  // 1) Clamp anti-futuro: si la terminal mandó un timestamp por delante del
+  //    reloj del servidor (zona horaria/reloj mal configurado), se usa el
+  //    reloj del servidor. Corrige el bug de las terminales Hikvision que
+  //    estampaban event_time +2h incluso después de arreglar la config.
+  let effectiveEventTime = eventTime;
+  const now = new Date();
+  if (effectiveEventTime.getTime() > now.getTime() + FUTURE_TOLERANCE_MS) {
+    console.warn(
+      `[attendance] event_time ${effectiveEventTime.toISOString()} es futuro vs servidor ${now.toISOString()} — clampando al reloj del servidor (student ${student._id}, device ${device})`
+    );
+    effectiveEventTime = now;
+  }
+
+  // 2) Duplicados cross-device: ¿el alumno tocó en ANY dispositivo dentro de
+  //    la ventana (por defecto 5 min) alrededor de este evento? Si sí y no es
+  //    un absent del cron → duplicado, se reutiliza el log sin notificar.
+  const windowMs = getCrossDeviceWindowMs();
+  const recent = await AttendanceLog.findOne({
+    student_id: student._id,
+    event_time: {
+      $gte: new Date(effectiveEventTime.getTime() - windowMs),
+      $lte: new Date(effectiveEventTime.getTime() + windowMs),
+    },
+  }).sort({ event_time: -1 });
+
+  if (recent) {
+    const isCronAbsence =
+      recent.status === "absent" && recent.event_type === "entry";
+    if (!isCronAbsence) {
+      console.log(
+        `[attendance] duplicate cross-device for student ${student._id}: reusing ${recent._id} (${recent.event_type} @ ${recent.event_time.toISOString()}, window ±${Math.round(windowMs / 60000)} min, device ${device})`
+      );
+      return {
+        log: recent,
+        eventType: recent.event_type,
+        duplicate: true,
+        wasAbsenceOverride: false,
+      };
+    }
+    // El log reciente es un absent del cron → NO suprimir: caer al flujo
+    // normal para que determineNextType + isAfterGracePeriod +
+    // resolveLateArrival reviertan absent → on_time con la hora real del tap.
+  }
+
+  // 3) Late-arrival: si el alumno ya tiene un `absent` de HOY, este tap lo
+  //    revierte absent → on_time con la hora real del tap. Se consulta ANTES
+  //    de determineNextType porque un absent ES un `entry` faltante: la
+  //    alternancia diría "el siguiente tap es exit" y el alumno tardío
+  //    habría registrado una SALIDA a los minutos de llegar, dejándolo
+  //    ausente todo el día. resolveLateArrival es incondicional aquí — si
+  //    existe el absent de hoy, el alumno acaba de pasar el lector y ya está
+  //    presente (documentado en AGENTS.md, sección late-arrival override).
+  const localDay = toLocalDate(effectiveEventTime);
+  const endOfDay = new Date(localDay.getTime() + 24 * 60 * 60 * 1000);
+  const existingAbsent = await AttendanceLog.findOne({
+    student_id: student._id,
+    event_type: "entry",
+    status: "absent",
+    event_time: { $gte: localDay, $lt: endOfDay },
+  }).select("_id");
+  if (existingAbsent) {
+    console.log(
+      `[attendance] late arrival for student ${student._id}: flipping absent ${existingAbsent._id} → on_time at ${effectiveEventTime.toISOString()} (device ${device})`
+    );
+    const result = await resolveLateArrival({
+      student,
+      eventTime: effectiveEventTime,
+      device,
+      verificationMode,
+      snapshotUrl,
+    });
     return {
-      log: existing,
-      eventType: existing.event_type,
-      duplicate: true,
-      wasAbsenceOverride: false,
+      log: result.log,
+      eventType: "entry",
+      duplicate: result.duplicate,
+      wasAbsenceOverride: result.wasAbsenceOverride,
     };
   }
 
-  const eventType = await determineNextType(student._id, eventTime);
+  const eventType = await determineNextType(student._id, effectiveEventTime);
 
   // Para entry events: si el alumno llegó después del corte de gracia,
   // resolver arrival (puede actualizar un absent→on_time o crear on_time normal)
   if (eventType === "entry") {
-    const { after } = await isAfterGracePeriod(student, eventTime);
+    const { after } = await isAfterGracePeriod(student, effectiveEventTime);
     if (after) {
       const result = await resolveLateArrival({
         student,
-        eventTime,
+        eventTime: effectiveEventTime,
         device,
         verificationMode,
         snapshotUrl,
@@ -469,13 +597,13 @@ const registerAttendanceEvent = async ({
   // Flujo normal: computeEntryStatus para entry, null para exit
   let status = null;
   if (eventType === "entry") {
-    status = await computeEntryStatus(student, eventTime);
+    status = await computeEntryStatus(student, effectiveEventTime);
   }
 
   const log = await AttendanceLog.create({
     school: student.school,
     student_id: student._id,
-    event_time: eventTime,
+    event_time: effectiveEventTime,
     event_type: eventType,
     device,
     verificationMode,
@@ -487,7 +615,7 @@ const registerAttendanceEvent = async ({
   // día — el alumno acaba de registrar su salida. Sin exit log no podría
   // saberse; con él, el par entry+exit describe el día completo.
   if (eventType === "exit") {
-    const localDay = toLocalDate(eventTime);
+    const localDay = toLocalDate(effectiveEventTime);
     const endOfDay = new Date(localDay.getTime() + 24 * 60 * 60 * 1000);
     await AttendanceLog.updateOne(
       {
