@@ -10,3 +10,6 @@ coverage/
 dist/
 eduk-control-firebase-adminsdk-*.json
 credentials.md_backup-*
+
+# Backups de scripts destructivos
+scripts/_backups/
