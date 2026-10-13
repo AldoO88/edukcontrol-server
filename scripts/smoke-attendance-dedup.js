@@ -145,10 +145,22 @@ async function main() {
   // ---- E) late-arrival: absent de hoy se revierte, no crea exit ----
   console.log("[E] late-arrival: absent de hoy + tap → on_time");
   const se = await makeStudent(5);
+  // El absent se coloca a medianoche LOCAL del mismo día local del tap.
+  // Los queries internos usan el rango naive [D 00:00Z, D+1 00:00Z); 06:00Z
+  // (00:00 local con offset -360) cae SIEMPRE dentro, a cualquier hora en
+  // que se corra el smoke (con "base − 1h" fallaba entre 19:00–24:00 local:
+  // el event_time cruzaba la medianoche UTC y quedaba fuera del rango).
+  const tzOffset = parseInt(process.env.ADMS_TZ_OFFSET_MINUTES || "-360", 10);
+  const tapLocal = new Date(base + tzOffset * 60000);
+  const naiveDay = Date.UTC(
+    tapLocal.getUTCFullYear(),
+    tapLocal.getUTCMonth(),
+    tapLocal.getUTCDate()
+  );
   const absent = await AttendanceLog.create({
     school: se.school,
     student_id: se._id,
-    event_time: new Date(base - 60 * 60 * 1000), // cutoff hace 1 h, mismo día local
+    event_time: new Date(naiveDay - tzOffset * 60000), // 00:00 hora local
     event_type: "entry",
     device: "auto@system",
     verificationMode: "MANUAL",
