@@ -168,6 +168,8 @@ Both `absenceMarkedAt` and `exitCheckedAt` are reset on server startup if their 
 
 **Late-arrival override.** When a student taps AFTER the entry cutoff, `registerAttendanceEvent` calls `isAfterGracePeriod`; if true, it routes to `resolveLateArrival`, which flips an existing `absent` log to `on_time` with the real tap time. (`status: "late"` is in the schema enum but never written today — all late taps become `on_time` after the flip.)
 
+**Push de llegadas — NUNCA "RETARDO" (acuerdo con el cliente).** Llegar tarde puede deberse a un inconveniente y no es motivo de alerta. TODO tap de entrada (en gracia, fuera de gracia, o que revierta un `absent`) notifica vía `dispatchNotificationInBackground` → `sendAttendanceNotification` → título neutral `ENTRADA: {nombre}` / cuerpo `… registró entrada a las HH:MM`. `sendAbsenceNotification` se niega a enviar salvo `status === "absent"` (título `AUSENCIA`) y solo lo invoca el cron/manual (`dispatchAbsenceNotificationInBackground`). No reintroducir el ternario `absent ? AUSENCIA : RETARDO` (bug preexistente: los entries salían como "RETARDO: … llegó tarde" hasta 2026-10-12).
+
 **Exit-clear override.** When an `exit` log is created, `registerAttendanceEvent` clears `exit_missing` and `exit_missing_at` on the entry log of the same local day. The "SALIDA: ..." push still fires (normal attendance notification).
 
 **Day-boundary alternation.** `determineNextType(studentId, eventTime)` compares the last log's local date to the event's local date — if they differ, the next tap is forced to `entry`. This prevents a student who forgot to scan out yesterday from having today's morning arrival logged as `exit` (which would also throw off the absent-vs-entry alternate-flow decision).
@@ -363,7 +365,7 @@ El mismo cron que marca ausencias corre después un pase para detectar alumnos q
 
 **Modelo:** `AttendanceLog.exit_missing: Boolean` + `exit_missing_at: Date`. Se limpian en `registerAttendanceEvent` cuando se crea un `exit` log del mismo día (consulta por día local con `ADMS_TZ_OFFSET_MINUTES`).
 
-**Push al tutor:** `notification.service.js#sendMissingExitNotification` con título `SIN SALIDA: {nombre}` y cuerpo `{nombre} registró entrada a las HH:mm pero no registró salida. Si se encuentra en la escuela, favor de avisar a la oficina.`. Canal `eduk_attendance_channel`. Data `kind: "missing_exit"`.
+**Push al tutor:** `notification.service.js#sendMissingExitNotification` con título `SIN SALIDA: {nombre}` y cuerpo `{nombre} registró entrada a las HH:mm pero no registró salida. Si se encuentra en la escuela, favor de avisar a la oficina.`. Canal `eduk_attendance_channel`. Data `kind: "missing_exit"`. **`missing_exit` debe estar en el enum `Notification.kind`** — hasta 2026-10-12 no lo estaba y `persistNotification` fallaba con `ValidationError` tragada por el catch best-effort: los 140 flags del día 12 generaron 0 documentos en la campanita in-app (el envío a Expo se intenta aparte del persist; verificar en logs de Render si salió a teléfono).
 
 **Consulta API (sin UI en web por ahora):** `GET /api/attendance/logs?exit_missing=true` filtra solo los entry logs marcados. Combinable con `from`/`to` para acotar el día. Cuando se implemente la pantalla de asistencia, este endpoint ya tiene los datos.
 

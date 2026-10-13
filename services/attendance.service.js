@@ -165,8 +165,11 @@ const dispatchNotificationInBackground = (student, attendanceLog) => {
   });
 };
 
-// Dispara notificación de ausencia/retardo fuera del ciclo de respuesta.
-// Usa sendAbsenceNotification en vez de sendAttendanceNotification.
+// Dispara notificación de AUSENCIA fuera del ciclo de respuesta.
+// SOLO para ausencias reales (cron manual/admin) — usa
+// sendAbsenceNotification, que se niega a enviar si status !== "absent".
+// Las llegadas (en gracia o fuera de ella) van por
+// dispatchNotificationInBackground con el mensaje neutral "ENTRADA".
 const dispatchAbsenceNotificationInBackground = (student, attendanceLog) => {
   process.nextTick(() => {
     (async () => {
@@ -427,7 +430,7 @@ const resolveLateArrival = async ({
     );
 
     await invalidateGuardianCaches(student);
-    dispatchAbsenceNotificationInBackground(student, updated);
+    dispatchNotificationInBackground(student, updated);
 
     return { log: updated, wasAbsenceOverride: true, duplicate: false };
   }
@@ -445,7 +448,7 @@ const resolveLateArrival = async ({
   });
 
   await invalidateGuardianCaches(student);
-  dispatchAbsenceNotificationInBackground(student, log);
+  dispatchNotificationInBackground(student, log);
 
   return { log, wasAbsenceOverride: false, duplicate: false };
 };

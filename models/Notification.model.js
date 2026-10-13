@@ -71,7 +71,8 @@ const notificationSchema = new Schema(
       type: String,
       enum: [
         "attendance",                // RFID/face tap
-        "absence",                   // ausencia o retardo
+        "absence",                   // ausencia (NO retardo — ver notification.service.js)
+        "missing_exit",              // entró pero no salió (chequeo del cron)
         "citation",                  // citatorio nuevo
         "citation_rescheduled",      // reagendado
         "citation_cancelled",        // cancelado

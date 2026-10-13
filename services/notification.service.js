@@ -283,6 +283,14 @@ const sendAttendanceNotification = async (student, attendanceLog) => {
 // Notifica a los tutores de un estudiante sobre una ausencia marcada
 // automáticamente por el cronjob o manualmente por el admin.
 const sendAbsenceNotification = async (student, attendanceLog) => {
+  // SOLO ausencias reales. Jamás se notifica "RETARDO": llegar tarde
+  // puede deberse a un inconveniente y no es motivo de alerta (acuerdo
+  // con el cliente). Las llegadas usan sendAttendanceNotification y el
+  // mensaje neutral "ENTRADA: ... registró entrada a las HH:MM".
+  if (attendanceLog.status !== "absent") {
+    return { dispatched: 0, reason: "not_absent" };
+  }
+
   const guardians = await Guardian.find({
     students: student._id,
     school: student.school,
@@ -300,16 +308,9 @@ const sendAbsenceNotification = async (student, attendanceLog) => {
     minute: "2-digit",
   });
 
-  const statusLabel =
-    attendanceLog.status === "absent" ? "AUSENCIA" : "RETARDO";
-  const bodySuffix =
-    attendanceLog.status === "absent"
-      ? `fue marcado ausente a las ${time}.`
-      : `llegó tarde a las ${time}.`;
-
   const payload = {
-    title: `${statusLabel}: ${fullName}`,
-    body: `${fullName} ${bodySuffix}`,
+    title: `AUSENCIA: ${fullName}`,
+    body: `${fullName} fue marcado ausente a las ${time}.`,
     channelId: CHANNELS.attendance,
     data: {
       kind: "absence",
@@ -327,7 +328,7 @@ const sendAbsenceNotification = async (student, attendanceLog) => {
     : "no-school";
 
   console.log(
-    `[attendance][school=${schoolTag}] Dispatching ${statusLabel} for ${fullName} to ${guardians.length} guardian(s)`
+    `[attendance][school=${schoolTag}] Dispatching AUSENCIA for ${fullName} to ${guardians.length} guardian(s)`
   );
   return dispatchToGuardians(guardians, payload, "attendance");
 };
