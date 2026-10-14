@@ -1594,7 +1594,7 @@ const getAttendanceSessions = async (req, res, next) => {
       subject_id: new mongoose.Types.ObjectId(subject_id),
       period_id: new mongoose.Types.ObjectId(period_id),
     })
-      .populate("records.student_id", "first_name last_name")
+      .populate("records.student_id", "first_name last_name photoUrl")
       .sort({ date: 1 })
       .lean();
 
@@ -1609,6 +1609,7 @@ const getAttendanceSessions = async (req, res, next) => {
         studentName: r.student_id
           ? `${r.student_id.last_name || ""} ${r.student_id.first_name || ""}`.trim()
           : "Desconocido",
+        photoUrl: r.student_id?.photoUrl || null,
       })),
       summary: s.summary,
     }));
@@ -1627,12 +1628,13 @@ const getAttendanceSessions = async (req, res, next) => {
         status: "active",
         workshop_group_id: groupId,
       })
-        .select("first_name last_name")
+        .select("first_name last_name photoUrl")
         .lean();
 
       students = tallerStudents.map((s) => ({
         _id: s._id,
         fullName: `${s.last_name || ""} ${s.first_name || ""}`.trim(),
+        photoUrl: s.photoUrl || null,
       }));
     } else {
       const enrollments = await Enrollment.find({
@@ -1641,7 +1643,7 @@ const getAttendanceSessions = async (req, res, next) => {
         school_year_id: schoolYearId,
         cycle_status: "enrolled",
       })
-        .populate("student_id", "first_name last_name")
+        .populate("student_id", "first_name last_name photoUrl")
         .lean();
 
       students = enrollments
@@ -1649,6 +1651,7 @@ const getAttendanceSessions = async (req, res, next) => {
         .map((e) => ({
           _id: e.student_id._id,
           fullName: `${e.student_id.last_name || ""} ${e.student_id.first_name || ""}`.trim(),
+          photoUrl: e.student_id.photoUrl || null,
         }));
     }
 
@@ -2175,6 +2178,7 @@ const getGrades = async (req, res, next) => {
       students = tallerStudents.map((s) => ({
         _id: s._id,
         fullName: `${s.last_name || ""} ${s.first_name || ""}`.trim(),
+        photoUrl: s.photoUrl || null,
         enrollment_id: enrollmentMap[String(s._id)] || null,
       }));
     } else {
@@ -2184,7 +2188,7 @@ const getGrades = async (req, res, next) => {
         school_year_id: schoolYearId,
         cycle_status: "enrolled",
       })
-        .populate("student_id", "first_name last_name")
+        .populate("student_id", "first_name last_name photoUrl")
         .lean();
 
       students = enrollments
@@ -2192,6 +2196,7 @@ const getGrades = async (req, res, next) => {
         .map((e) => ({
           _id: e.student_id._id,
           fullName: `${e.student_id.last_name || ""} ${e.student_id.first_name || ""}`.trim(),
+          photoUrl: e.student_id.photoUrl || null,
           enrollment_id: e._id,
         }));
     }
@@ -2566,7 +2571,7 @@ const getGroupStudentsSummary = async (req, res, next) => {
         school: schoolId,
         status: "active",
         workshop_group_id: groupIdObj,
-      }).select("first_name last_name controlNumber guardians").lean();
+      }).select("first_name last_name controlNumber photoUrl guardians").lean();
     } else {
       const enrollments = await Enrollment.find({
         school: schoolId,
@@ -2574,7 +2579,7 @@ const getGroupStudentsSummary = async (req, res, next) => {
         school_year_id: schoolYearId,
         cycle_status: "enrolled",
       })
-        .populate("student_id", "first_name last_name controlNumber guardians")
+        .populate("student_id", "first_name last_name controlNumber photoUrl guardians")
         .lean();
       studentsRaw = enrollments.map((e) => e.student_id).filter(Boolean);
     }
@@ -2781,6 +2786,7 @@ const getGroupStudentsSummary = async (req, res, next) => {
         _id: s._id,
         fullName: `${lastName} ${firstName}`.trim(),
         controlNumber: s.controlNumber || null,
+        photoUrl: s.photoUrl || null,
         initials,
         average: studentAverages[sid] !== undefined ? studentAverages[sid] : null,
         attendancePercentage: studentAttendancePercentages[sid] || 0,
@@ -2862,7 +2868,7 @@ const getStudentFile = async (req, res, next) => {
 
     // 2. Obtener alumno, grupo y materia en paralelo
     const [studentDoc, groupDoc, subjectDoc] = await Promise.all([
-      Student.findById(studentIdObj).select("first_name last_name controlNumber guardians workshop_group_id").lean(),
+      Student.findById(studentIdObj).select("first_name last_name controlNumber photoUrl guardians workshop_group_id").lean(),
       Group.findById(groupIdObj).select("grade section").lean(),
       Subject.findById(subjectIdObj).select("name code classificationType").lean(),
     ]);
@@ -3099,6 +3105,7 @@ const getStudentFile = async (req, res, next) => {
         _id: studentDoc._id,
         fullName: `${lastName} ${firstName}`.trim(),
         controlNumber: studentDoc.controlNumber || null,
+        photoUrl: studentDoc.photoUrl || null,
         initials,
         guardian: primaryGuardian,
       },
@@ -3167,7 +3174,7 @@ const getStudentTutoriaFile = async (req, res, next) => {
 
     // 2. Obtener alumno y grupo
     const [studentDoc, groupDoc] = await Promise.all([
-      Student.findById(studentIdObj).select("first_name last_name controlNumber workshop_group_id").lean(),
+      Student.findById(studentIdObj).select("first_name last_name controlNumber photoUrl workshop_group_id").lean(),
       Group.findById(groupIdObj).select("grade section").lean(),
     ]);
 
@@ -3462,6 +3469,7 @@ const getStudentTutoriaFile = async (req, res, next) => {
         _id: studentDoc._id,
         fullName: `${lastName} ${firstName}`.trim(),
         controlNumber: studentDoc.controlNumber || null,
+        photoUrl: studentDoc.photoUrl || null,
         initials,
       },
       group: {
