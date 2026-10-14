@@ -100,9 +100,10 @@ const moveStudentAssets = async (studentId, oldSchoolId, newSchoolId) => {
 };
 
 // Helper: devuelve el filtro base de tenant.
-// super_admin no filtra; el resto ve solo su escuela.
-const tenantFilter = (req) =>
-  req.payload.role === "super_admin" ? {} : { school: req.payload.schoolId };
+// super_admin no filtra (salvo que pase ?school=<oid> para acotar el
+// listado a una escuela concreta desde el panel web); el resto ve solo
+// su escuela. Definido en utils/school-scope.js.
+const { tenantFilter } = require("../utils/school-scope");
 
 // POST /api/students/register
 // Crea un estudiante. El school se asigna automáticamente desde el JWT
@@ -132,7 +133,8 @@ const createStudent = async (req, res, next) => {
 };
 
 // GET /api/students
-// Lista paginada y filtrada por tenant.
+// Lista paginada y filtrada por tenant. Query opcional: school (solo
+// super_admin) — acota el listado a esa escuela.
 const getAllStudents = async (req, res, next) => {
   try {
     const {

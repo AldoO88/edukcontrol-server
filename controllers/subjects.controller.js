@@ -2,14 +2,11 @@
 // CRUD del catálogo de materias de la escuela. Multi-tenant estricto.
 const mongoose = require("mongoose");
 const Subject = require("../models/Subject.model");
-
-const tenantFilter = (req) =>
-  req.payload.role === "super_admin"
-    ? {}
-    : { school: req.payload.schoolId };
+// Scope multi-tenant compartido (soporta ?school= para super_admin).
+const { tenantFilter } = require("../utils/school-scope");
 
 // GET /api/subjects
-// Lista las materias de la escuela. Filtros: ?isActive=true
+// Lista las materias de la escuela. Filtros: ?isActive=true, ?school=<oid>
 const getAllSubjects = async (req, res, next) => {
   try {
     const filter = { ...tenantFilter(req) };

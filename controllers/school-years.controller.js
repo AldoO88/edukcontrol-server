@@ -7,16 +7,15 @@ const School = require("../models/School.model");
 const GroupTemplate = require("../models/GroupTemplate.model");
 const Group = require("../models/Group.model");
 
-const tenantFilter = (req) =>
-  req.payload.role === "super_admin" ? {} : { school: req.payload.schoolId };
+// Scope multi-tenant compartido: soporta `?school=<oid>` SOLO para
+// super_admin (el panel web navega cross-tenant). Para el resto de
+// roles el parámetro se ignora y el tenant sale del JWT.
+const { tenantFilter } = require("../utils/school-scope");
 
 // GET /api/school-years
 const getAllSchoolYears = async (req, res, next) => {
   try {
     const filter = { ...tenantFilter(req) };
-    if (req.query.school && mongoose.Types.ObjectId.isValid(req.query.school)) {
-      filter.school = req.query.school;
-    }
     const items = await SchoolYear.find(filter).sort({ startDate: -1 });
     res.status(200).json({ items, total: items.length });
   } catch (error) {

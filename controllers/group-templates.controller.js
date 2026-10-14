@@ -3,12 +3,11 @@
 
 const mongoose = require("mongoose");
 const GroupTemplate = require("../models/GroupTemplate.model");
-
-const tenantFilter = (req) =>
-  req.payload.role === "super_admin" ? {} : { school: req.payload.schoolId };
+// Scope multi-tenant compartido (soporta ?school= para super_admin).
+const { tenantFilter } = require("../utils/school-scope");
 
 // GET /api/group-templates
-// Query opcionales: grade, shift
+// Query opcionales: grade, shift, school (solo super_admin — acota a esa escuela)
 const getAllGroupTemplates = async (req, res, next) => {
   try {
     const filter = { ...tenantFilter(req) };

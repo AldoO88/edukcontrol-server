@@ -17,11 +17,12 @@ const DAYS_NAMES = {
   6: "Sábado",
 };
 
-const tenantFilter = (req) =>
-  req.payload.role === "super_admin" ? {} : { school: req.payload.schoolId };
+// Scope multi-tenant compartido (soporta ?school= para super_admin).
+const { tenantFilter } = require("../utils/school-scope");
 
 // GET /api/groups
 // Query params opcionales:
+//   - school: acota a esa escuela (solo super_admin)
 //   - school_year_id: filtra por ciclo específico (ObjectId de SchoolYear)
 //   - grade: filtra por grado (1, 2, 3)
 //   - section: filtra por sección (case-insensitive)

@@ -26,10 +26,8 @@ const {
 
 const DASHBOARD_TTL = parseInt(process.env.CACHE_TTL_DASHBOARD || "300", 10); // esta linea de codigo es para que el tiempo de vida del cache sea configurable via variable de entorno, con un valor por defecto de 300 segundos (5 minutos) si no se especifica.
 
-const tenantFilter = (req) =>
-  req.payload.role === "super_admin"
-    ? {}
-    : { school: req.payload.schoolId };
+// Scope multi-tenant compartido (soporta ?school= para super_admin).
+const { tenantFilter } = require("../utils/school-scope");
 
 const ADMIN_LIKE_ROLES = ["admin", "registrar", "super_admin"];
 
@@ -92,7 +90,7 @@ const validateStudentIds = async (studentIds, school) => {
 // Listar tutores. Filtros opcionales: user_id, student_id, search
 // (regex por nombre/phone), phone (exacto 10 dígitos, usa el índice
 // único {school, phone} — recomendado para auto-detección en el form
-// de alta de alumno).
+// de alta de alumno), school (solo super_admin: acota a esa escuela).
 const getAllGuardians = async (req, res, next) => {
   try {
     const {
@@ -256,6 +254,8 @@ const getAllGuardians = async (req, res, next) => {
 //   alumnos_sin_tutor    — Student con school de la escuela cuyo _id
 //                          no aparece en ningún Guardian.students de
 //                          la escuela (incluye activos y desactivados)
+// Query opcional: school (solo super_admin) — acota todos los contadores
+// a esa escuela; el resto de roles siempre usa la del JWT.
 const getGuardiansStats = async (req, res, next) => {
   try {
     const tenant = tenantFilter(req);

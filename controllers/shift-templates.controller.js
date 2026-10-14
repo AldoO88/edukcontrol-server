@@ -2,13 +2,11 @@
 // CRUD de plantillas a nivel escuela (sin ciclo escolar).
 const mongoose = require("mongoose");
 const ShiftTemplate = require("../models/ShiftTemplate.model");
-
-const tenantFilter = (req) =>
-  req.payload.role === "super_admin"
-    ? {}
-    : { school: req.payload.schoolId };
+// Scope multi-tenant compartido (soporta ?school= para super_admin).
+const { tenantFilter } = require("../utils/school-scope");
 
 // GET /api/shift-templates
+// Query opcional: school (solo super_admin) — acota a esa escuela.
 const getAllTemplates = async (req, res, next) => {
   try {
     const filter = { ...tenantFilter(req) };
