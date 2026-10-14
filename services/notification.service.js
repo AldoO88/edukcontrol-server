@@ -24,6 +24,14 @@ const Guardian = require("../models/Guardian.model"); // Modelo de tutores
 const Student = require("../models/Student.model"); // Modelo de estudiantes
 const User = require("../models/User.model"); // Modelo de usuarios (para notificaciones a staff)
 const notificationsService = require("./notifications.service"); // Persistencia in-app (campanita)
+// Helpers de formateo hora/fecha en zona de la escuela. OBLIGATORIOS en
+// este módulo: los cuerpos de push se guardan como string (campanita) y en
+// prod (contenedor UTC) un `toLocale*` pelado imprimía la hora UTC (+6h).
+const {
+  formatSchoolTime,
+  formatSchoolDateTime,
+  formatWallClockTime,
+} = require("../utils/school-time");
 
 // URL del servicio de Expo Push. Puede sobreescribirse en .env para
 // tests o entornos on-prem. El default es el público de Expo.
@@ -255,7 +263,10 @@ const sendAttendanceNotification = async (student, attendanceLog) => {
   const fullName = `${student.first_name} ${student.last_name}`.trim();
   const eventTypeLabel =
     attendanceLog.event_type === "entry" ? "ENTRADA" : "SALIDA";
-  const time = new Date(attendanceLog.event_time).toLocaleTimeString("en-US", {
+  // Los taps se guardan como instante UTC REAL (la terminal manda offset
+  // -06:00) → convertir a hora escolar con el offset de la escuela. Sin
+  // esto, en prod (UTC) el cuerpo salía +6h ("01:23 PM" en vez de "07:23 AM").
+  const time = formatSchoolTime(attendanceLog.event_time, "en-US", {
     hour: "2-digit",
     minute: "2-digit",
   });
@@ -303,7 +314,11 @@ const sendAbsenceNotification = async (student, attendanceLog) => {
   }
 
   const fullName = `${student.first_name} ${student.last_name}`.trim();
-  const time = new Date(attendanceLog.event_time).toLocaleTimeString("en-US", {
+  // OJO: este event_time viene del CRON (`markAbsencesForSchool`) y guarda
+  // la hora PARED del cutoff forzada a UTC (`setUTCHours(07:30)` → 07:30Z),
+  // NO un instante real → usar el formatter wall-clock SIN offset. Con
+  // formatSchoolTime saldría 6h antes ("01:30 AM" en vez de "07:30 AM").
+  const time = formatWallClockTime(attendanceLog.event_time, "en-US", {
     hour: "2-digit",
     minute: "2-digit",
   });
@@ -354,7 +369,9 @@ const sendMissingExitNotification = async (student, entryLog) => {
   const fullName = `${student.first_name || ""} ${student.last_name || ""}`.trim() ||
     "Alumno";
 
-  const entryTime = new Date(entryLog.event_time).toLocaleTimeString("en-US", {
+  // El entry log es de un tap de dispositivo → instante UTC real → hora
+  // escolar vía offset (igual que sendAttendanceNotification).
+  const entryTime = formatSchoolTime(entryLog.event_time, "en-US", {
     hour: "2-digit",
     minute: "2-digit",
   });
@@ -402,7 +419,9 @@ const sendCitationNotification = async (citation) => {
     return { dispatched: 0, reason: "no_guardians" };
   }
 
-  const dateStr = new Date(citation.scheduledDate).toLocaleString("es-MX", {
+  // `scheduledDate` es instante UTC real desde la migración 2026-10-14
+  // (shim parseScheduledDate + backfill) → convertir a hora escolar.
+  const dateStr = formatSchoolDateTime(citation.scheduledDate, "es-MX", {
     weekday: "short",
     day: "2-digit",
     month: "short",
@@ -456,7 +475,9 @@ const sendCitationRescheduledNotification = async (citation) => {
     return { dispatched: 0, reason: "no_guardians" };
   }
 
-  const dateStr = new Date(citation.scheduledDate).toLocaleString("es-MX", {
+  // `scheduledDate` es instante UTC real desde la migración 2026-10-14
+  // (shim parseScheduledDate + backfill) → convertir a hora escolar.
+  const dateStr = formatSchoolDateTime(citation.scheduledDate, "es-MX", {
     weekday: "short",
     day: "2-digit",
     month: "short",
@@ -502,7 +523,9 @@ const sendCitationCancelledNotification = async (citation) => {
     return { dispatched: 0, reason: "no_guardians" };
   }
 
-  const dateStr = new Date(citation.scheduledDate).toLocaleString("es-MX", {
+  // `scheduledDate` es instante UTC real desde la migración 2026-10-14
+  // (shim parseScheduledDate + backfill) → convertir a hora escolar.
+  const dateStr = formatSchoolDateTime(citation.scheduledDate, "es-MX", {
     weekday: "short",
     day: "2-digit",
     month: "short",
@@ -683,7 +706,9 @@ const sendCitationConfirmedNotification = async (citation, guardianName) => {
     return { dispatched: 0, reason: "creator_not_found" };
   }
 
-  const dateStr = new Date(citation.scheduledDate).toLocaleString("es-MX", {
+  // `scheduledDate` es instante UTC real desde la migración 2026-10-14
+  // (shim parseScheduledDate + backfill) → convertir a hora escolar.
+  const dateStr = formatSchoolDateTime(citation.scheduledDate, "es-MX", {
     weekday: "short",
     day: "2-digit",
     month: "short",

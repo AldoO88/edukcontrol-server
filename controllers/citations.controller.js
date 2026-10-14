@@ -31,6 +31,65 @@ const Enrollment = require("../models/Enrollment.model");
 const Guardian = require("../models/Guardian.model");
 const Subject = require("../models/Subject.model");
 const notificationService = require("../services/notification.service");
+// Offset escuela↔UTC para normalizar el `scheduledDate` entrante
+// (ver parseScheduledDate — convención: instante UTC real desde 2026-10-14).
+const { getSchoolOffsetMinutes } = require("../utils/school-time");
+
+// ---------------------------------------------------------------------
+// parseScheduledDate(raw) → Date | null
+// Convierte el `scheduledDate` entrante a un instante UTC REAL.
+//
+// Convención FINAL (migración 2026-10-14): `scheduledDate` es instante
+// UTC real (cita "10:00" hora escolar → `16:00Z` con offset -360). Con
+// eso, todas las comparaciones contra el reloj real (cron de no-show,
+// badge VENCIDO del front, filtros from/to) son correctas sin trucos.
+//
+// El backend acepta los TRES formatos para no romper nada durante el
+// rollout de la APK (las builds viejas siguen instaladas en los teléfonos):
+//
+//   1. Naïve "2026-10-15T10:00[:ss]"  → hora pared escolar. Es lo que
+//      manda la app NUEVA. Misma conversión que (2).
+//   2. Con "Z" "2026-10-15T10:00:00.000Z" → formato LEGACY de builds
+//      viejas: la hora elegida forzada a UTC (`Date.UTC` en la app).
+//      Se trata como hora pared escolar y se convierte (se loguea para
+//      poder medir cuántas builds viejas quedan activas).
+//   3. Con offset explícito "…T10:00:00-06:00" → ISO genuina, instante
+//      real tal cual (no manda nadie hoy, pero es lo semanticamente
+//      correcto si algún integrador la envía).
+//
+// Los componentes se parsean a mano (patrón de adms.controller#
+// parseDeviceTime) — NUNCA `new Date("naïve")`, que depende del TZ del
+// proceso y rompería si alguien corre el server con otro TZ.
+// Devuelve null si el string no se puede parsear (el controller responde
+// 400 con el mismo mensaje de siempre).
+const parseScheduledDate = (raw) => {
+  const str = String(raw || "").trim();
+  if (!str) return null;
+
+  // (3) Offset explícito ≠ "Z": ISO real, interpretar tal cual.
+  if (/[+-]\d{2}:\d{2}$/.test(str)) {
+    const parsed = new Date(str);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  // (1) Naïve o (2) legacy "Z": hora pared escolar → instante real.
+  const isLegacyZ = str.endsWith("Z");
+  const core = isLegacyZ ? str.slice(0, -1) : str;
+  const m = core.match(
+    /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?/
+  );
+  if (!m) return null;
+  const [, y, mo, d, h, mi, s] = m;
+  const wallUtc = Date.UTC(+y, +mo - 1, +d, +(h || 0), +(mi || 0), +(s || 0));
+  // real = pared − offset (offset=-360 → pared + 6h).
+  const real = new Date(wallUtc - getSchoolOffsetMinutes() * 60000);
+  if (isLegacyZ) {
+    console.log(
+      `[citations] scheduledDate legacy (Z) convertido: ${str} → ${real.toISOString()} (build vieja de la APK o integrador)`
+    );
+  }
+  return real;
+};
 
 const tenantFilter = (req) =>
   req.payload.role === "super_admin"
@@ -253,12 +312,13 @@ const createCitation = async (req, res, next) => {
       return res.status(400).json({ message: "Invalid schoolYear." });
     }
 
-    // 5) Validar scheduledDate.
+    // 5) Validar scheduledDate (instante UTC real — ver parseScheduledDate:
+    //    acepta formato naïve nuevo y legacy "Z" de builds viejas de la APK).
     if (!scheduledDate) {
       return res.status(400).json({ message: "scheduledDate is required." });
     }
-    const scheduledDateObj = new Date(scheduledDate);
-    if (Number.isNaN(scheduledDateObj.getTime())) {
+    const scheduledDateObj = parseScheduledDate(scheduledDate);
+    if (!scheduledDateObj) {
       return res
         .status(400)
         .json({ message: "scheduledDate is not a valid ISO date." });
@@ -653,12 +713,12 @@ const rescheduleCitation = async (req, res, next) => {
       });
     }
 
-    // Validar scheduledDate
+    // Validar scheduledDate (instante UTC real — ver parseScheduledDate)
     if (!scheduledDate) {
       return res.status(400).json({ message: "scheduledDate is required." });
     }
-    const scheduledDateObj = new Date(scheduledDate);
-    if (Number.isNaN(scheduledDateObj.getTime())) {
+    const scheduledDateObj = parseScheduledDate(scheduledDate);
+    if (!scheduledDateObj) {
       return res
         .status(400)
         .json({ message: "scheduledDate is not a valid ISO date." });
@@ -997,6 +1057,8 @@ const getMyCitations = async (req, res, next) => {
   rescheduleCitation,
   updateCitation,
   cancelCitation,
+  // Exportado solo para pruebas unitarias (formato legacy vs nuevo).
+  parseScheduledDate,
   REPORTER_ROLES,
   ADMIN_ROLES,
   STAFF_ROLES,

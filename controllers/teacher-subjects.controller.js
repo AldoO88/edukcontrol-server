@@ -23,6 +23,11 @@ const Announcement = require("../models/Announcement.model");
 const Guardian = require("../models/Guardian.model");
 const ConductLog = require("../models/ConductLog.model");
 const { toMinutes } = require("../models/SchoolShift.model");
+// Helper de hora escolar: este controller decide "clase actual/completada"
+// y muestra fecha/hora actuales — TODO debe leerse en la hora de la escuela,
+// no en la del servidor (en prod/UTC el dashboard del maestro mostraba la
+// hora UTC y marcaba la materia equivocada durante 6h).
+const { toSchoolDate } = require("../utils/school-time");
 
 const tenantFilter = (req) =>
   req.payload.role === "super_admin"
@@ -227,8 +232,12 @@ const getTeacherDashboard = async (req, res, next) => {
 
     // 2. Horario del maestro para el día de hoy
     const now = new Date();
-    const today = now.getDay(); // 0=domingo...6=sábado
-    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    // Reloj de la escuela (mismo instante, corrido al offset de la escuela).
+    // Se lee SIEMPRE con getters getUTC* → idéntico en dev y en prod.
+    const schoolNow = toSchoolDate(now);
+    const today = schoolNow.getUTCDay(); // 0=domingo...6=sábado (día ESCOLAR)
+    const currentMinutes =
+      schoolNow.getUTCHours() * 60 + schoolNow.getUTCMinutes(); // hora ESCOLAR
 
     // Buscar todos los ClassSchedule del maestro en este ciclo
     const schedules = await ClassSchedule.find({
@@ -305,18 +314,20 @@ const getTeacherDashboard = async (req, res, next) => {
       }
     }
 
-    // 4. Formatear fechas en español
+    // 4. Formatear fechas en español (componentes ESCOLARES vía schoolNow)
     const days = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
     const months = [
       "enero", "febrero", "marzo", "abril", "mayo", "junio",
       "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
     ];
-    const dateStr = `${days[now.getDay()]}, ${now.getDate()} de ${months[now.getMonth()]}`;
+    const dateStr = `${days[schoolNow.getUTCDay()]}, ${schoolNow.getUTCDate()} de ${months[schoolNow.getUTCMonth()]}`;
 
-    // Formatear hora actual en 12h
+    // Formatear hora actual en 12h.
+    // `date` debe ser el reloj ESCOLAR (schoolNow, ver toSchoolDate): se lee
+    // con getUTC* para no depender del TZ del servidor.
     const formatTime12 = (date) => {
-      let h = date.getHours();
-      const m = date.getMinutes().toString().padStart(2, "0");
+      let h = date.getUTCHours();
+      const m = date.getUTCMinutes().toString().padStart(2, "0");
       const ampm = h >= 12 ? "p.m." : "a.m.";
       h = h % 12 || 12;
       return `${h}:${m} ${ampm}`;
@@ -345,7 +356,7 @@ const getTeacherDashboard = async (req, res, next) => {
       currentSchoolYear,
       // Fecha y hora
       currentDate: dateStr,
-      currentTime: formatTime12(now),
+      currentTime: formatTime12(schoolNow),
       // Horario del día
       todaySchedule: {
         totalClasses: todayClasses.length,

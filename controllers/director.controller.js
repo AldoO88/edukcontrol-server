@@ -15,6 +15,10 @@ const Announcement = require("../models/Announcement.model");
 const Citation = require("../models/Citation.model");
 const ConductLog = require("../models/ConductLog.model");
 const ExitPass = require("../models/ExitPass.model");
+// Helper de fecha escolar: el label "currentDate" del dashboard debe leerse
+// en la hora de la escuela, no en la del servidor (en prod/UTC se desfasaba
+// al día siguiente entre las 18:00 y 24:00 h locales).
+const { formatSchoolDate } = require("../utils/school-time");
 
 // =====================================================================
 // GET /api/director/dashboard
@@ -149,7 +153,9 @@ const getDirectorDashboard = async (req, res, next) => {
         cycle: currentSchoolYear?.name || null,
         school_year_id: currentSchoolYear?._id || schoolYearId || null,
       },
-      currentDate: today.toLocaleDateString("es-MX", {
+      // Fecha de HOY leída en la escuela (offset explícito, no el TZ del
+      // servidor): en prod (UTC) este label se desfasaba tras las 18:00 h.
+      currentDate: formatSchoolDate(today, "es-MX", {
         weekday: "long",
         day: "numeric",
         month: "long",

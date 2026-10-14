@@ -28,6 +28,13 @@ const DASHBOARD_TTL = parseInt(process.env.CACHE_TTL_DASHBOARD || "300", 10); //
 
 // Scope multi-tenant compartido (soporta ?school= para super_admin).
 const { tenantFilter } = require("../utils/school-scope");
+// Helpers de hora/fecha en zona de la escuela: el historial de asistencia
+// formatea los `event_time` (instantes UTC reales) ANTES de responder y en
+// prod (contenedor UTC) salían +6h ("01:23 PM" en vez de "07:23 AM").
+const {
+  formatSchoolTime,
+  formatWallClockDateTime,
+} = require("../utils/school-time");
 
 const ADMIN_LIKE_ROLES = ["admin", "registrar", "super_admin"];
 
@@ -1711,17 +1718,23 @@ const getMyStudentAttendanceHistory = async (req, res, next) => {
         status = "ON_TIME";
       }
 
+      // Hora de tap (entry/exit): instante UTC real → hora escolar vía
+      // offset. Sin esto, en prod se mostraba la hora UTC (+6h).
       const formatTime = (d) => {
         if (!d) return null;
-        return d.toLocaleTimeString("es-MX", {
+        return formatSchoolTime(d, "es-MX", {
           hour: "2-digit",
           minute: "2-digit",
           hour12: true,
         });
       };
 
-      const formatDate = (d) => {
-        return d.toLocaleDateString("es-MX", {
+      // Fecha del historial: `dayKey` YA es el día calendario de la escuela
+      // ("YYYY-MM-DD") → se parsea como UTC medianoche y se formatea leyendo
+      // los getUTC* (wall-clock), sin depender del TZ del servidor. Antes se
+      // construía "T12:00:00" local-servidor, frágil fuera de dev.
+      const formatDate = (dayKey) => {
+        return formatWallClockDateTime(`${dayKey}T00:00:00Z`, "es-MX", {
           month: "short",
           day: "numeric",
           year: "numeric",
@@ -1730,7 +1743,7 @@ const getMyStudentAttendanceHistory = async (req, res, next) => {
 
       history.push({
         date: dayKey,
-        date_formatted: formatDate(new Date(dayKey + "T12:00:00")),
+        date_formatted: formatDate(dayKey),
         entry: status === "NO_ENTRY" ? null : formatTime(firstEntry),
         exit: formatTime(lastExit),
         status,

@@ -169,9 +169,33 @@ Both `absenceMarkedAt` and `exitCheckedAt` are reset on server startup if their 
 
 **Timezone correctness.** The cutoff comparisons use `Intl.DateTimeFormat({ timeZone: CRON_TZ })` (see `getCurrentMinutesInCronTz` in `config/cron.js`) — NOT `new Date().getHours()`, which on Render (UTC container) would mix UTC hours with Mexico-local `startTime` strings and could mark absences/deshoras. **Set `CRON_TZ=America/Mexico_City` in production.**
 
+**Formato de horas al mostrar — `utils/school-time.js` (OBLIGATORIO, regla del 2026-10-14).** En producción (contenedor UTC en Render) cualquier `toLocaleTimeString`/`toLocaleDateString`/`toLocaleString` **sin `timeZone`** imprime la hora UTC. Bug que motivó la regla: los pushes de ENTRADA/SALIDA decían "01:23 PM" en vez de "07:23 AM" (+6h) y el historial del tutor también. **NUNCA** formatear fechas "peladas" en el backend — pasar siempre por `utils/school-time.js`, que fuerzan `timeZone: "UTC"` en todos los calls. Los helpers son inmunes al `TZ` del proceso (verificado idéntico con `TZ=UTC`, `TZ=America/Mexico_City` y sin `TZ`).
+
+- `formatSchoolTime(value, locale, opts)` / `formatSchoolDate(...)` / `formatSchoolDateTime(...)` — para **instantes UTC reales**: aplican `ADMS_TZ_OFFSET_MINUTES` y devuelven la hora de la escuela. Úsense en todo `event_time` de TAP (Hikvision con offset `-06:00`, ZKTeco vía `adms.controller#parseDeviceTime` con offset, ausencias manuales con `new Date()`), en los pushes de ENTRADA/SALIDA/SIN SALIDA, en los pushes de citatorios (`scheduledDate`, desde la migración 2026-10-14) y en el historial del tutor (`guardians.controller`).
+- `formatWallClockTime(value, locale, opts)` / `formatWallClockDateTime(...)` — para valores guardados como **"hora pared forzada a UTC"** (ver tabla): NO aplican offset porque el valor YA es la hora local. Hoy solo quedan: el push de AUSENCIA (cuerpo `… ausente a las HH:MM` — su `event_time` wall-clock NO se migró, ver known issues) y el `dayKey` del historial del tutor.
+- `toSchoolDate(value)` + getters `getUTC*` — "reloj escolar" para LÓGICA (día de la semana, minutos del día, clase actual): usado por `teacher-subjects.controller` (`today`, `currentMinutes`, `formatTime12`).
+
+**Convenciones de almacenamiento MEZCLADAS (ojo antes de "normalizar"):**
+
+| Campo | Convención | Ejemplo |
+|---|---|---|
+| `AttendanceLog.event_time` de taps (dispositivo/manual) | instante UTC real | 07:23 local → `07:23Z-6h` = `13:23Z` |
+| `AttendanceLog.event_time` de ausencias del CRON | hora pared como UTC | cutoff 07:30 → guardado `07:30Z` |
+| `AttendanceLog.event_time` de ausencia manual (`registerAbsence`) | instante UTC real (`new Date()` o ISO del cliente) | `13:30Z` |
+| `Citation.scheduledDate` | **instante UTC real** (desde la migración 2026-10-14: shim `parseScheduledDate` + backfill) — antes era "hora pared como UTC" | 10:00 elegido → `16:00Z` |
+
+⚠️ **Known issues (NO corregir de pasada):** migrar `absentTime`/`event_time` de ausencias del CRON a "instante UTC real" rompe la ventana de duplicados ±5 min de `findRecentDuplicate` (un tap dentro de 5 min del cutoff chocaría con el absent y no dispararía el flip absent→on_time). Requiere plan dedicado + backfill — **`Citation.scheduledDate` SÍ se migró** (ver "Migración de `Citation.scheduledDate`" abajo); `absentTime` sigue pendiente a propósito.
+
+**Migración de `Citation.scheduledDate` (2026-10-14, hecha).** El campo ahora es **instante UTC real** (cita 10:00 hora escolar → `16:00Z`) y así comparan `cron-citations` (`scheduledDate < now` → badge/no-show correctos), los filtros `from/to` y el badge VENCIDO del front. Componentes:
+
+1. **Shim de entrada** — `citations.controller#parseScheduledDate` (exportado para tests) acepta los 3 formatos y devuelve instante real: naïve `2026-10-15T10:00` (app nueva — la manda SIN offset para distinguirse), con `Z` (builds viejas de la APK: hora pared fingiendo UTC → se convierte y se loguea para medir rollout), y con offset explícito `-06:00` (ISO genuina, tal cual). Parsea componentes a mano (inmune al `TZ` del proceso). Se usa en create y reschedule.
+2. **App nueva** — `combineDateTime` en los 4 modales (`GenerateCitationModal`/`RescheduleModal` de `(teacher)` y `(director)`) construye Date **local** (no `Date.UTC`) y serializa naïve vía `toNaiveLocalIso`; `citationHelpers#formatDateTime` usa getters locales. **Pendiente hasta autorizar el build de la APK.**
+3. **Backfill** — `scripts/backfill-citation-scheduled-date.js`: `BEFORE_ISO='<ISO del deploy>' node scripts/...` (dry-run con `DRY_RUN=1`). Idempotencia por `updatedAt < BEFORE_ISO` (el `updateOne` bumpa `updatedAt`, así que una 2ª corrida con el MISMO `BEFORE_ISO` los salta). **`BEFORE_ISO` debe ser fijo (momento del deploy), nunca "ahora".** Verificado: dry-run → apply (+6h) → 2ª corrida salta. **Correr en prod tras deploy (previo backup).**
+4. Builds viejas de la APK siguen leyendo su detalle con `getUTC*` → mostrarán −6h hasta actualizar la APK (la escritura de ellas queda corregida por el shim).
+
 **Late-arrival override.** When a student taps AFTER the entry cutoff, `registerAttendanceEvent` calls `isAfterGracePeriod`; if true, it routes to `resolveLateArrival`, which flips an existing `absent` log to `on_time` with the real tap time. (`status: "late"` is in the schema enum but never written today — all late taps become `on_time` after the flip.)
 
-**Push de llegadas — NUNCA "RETARDO" (acuerdo con el cliente).** Llegar tarde puede deberse a un inconveniente y no es motivo de alerta. TODO tap de entrada (en gracia, fuera de gracia, o que revierta un `absent`) notifica vía `dispatchNotificationInBackground` → `sendAttendanceNotification` → título neutral `ENTRADA: {nombre}` / cuerpo `… registró entrada a las HH:MM`. `sendAbsenceNotification` se niega a enviar salvo `status === "absent"` (título `AUSENCIA`) y solo lo invoca el cron/manual (`dispatchAbsenceNotificationInBackground`). No reintroducir el ternario `absent ? AUSENCIA : RETARDO` (bug preexistente: los entries salían como "RETARDO: … llegó tarde" hasta 2026-10-12).
+**Push de llegadas — NUNCA "RETARDO" (acuerdo con el cliente).** Llegar tarde puede deberse a un inconveniente y no es motivo de alerta. TODO tap de entrada (en gracia, fuera de gracia, o que revierta un `absent`) notifica vía `dispatchNotificationInBackground` → `sendAttendanceNotification` → título neutral `ENTRADA: {nombre}` / cuerpo `… registró entrada a las HH:MM`. `sendAbsenceNotification` se niega a enviar salvo `status === "absent"` (título `AUSENCIA`) y solo lo invoca el cron/manual (`dispatchAbsenceNotificationInBackground`). No reintroducir el ternario `absent ? AUSENCIA : RETARDO` (bug preexistente: los entries salían como "RETARDO: … llegó tarde" hasta 2026-10-12). La hora del cuerpo (`… a las HH:MM`) se formatea con `utils/school-time.js`: taps → `formatSchoolTime` (instante real), ausencias del cron → `formatWallClockTime` (hora pared) — ver "Formato de horas al mostrar" arriba.
 
 **Exit-clear override.** When an `exit` log is created, `registerAttendanceEvent` clears `exit_missing` and `exit_missing_at` on the entry log of the same local day. The "SALIDA: ..." push still fires (normal attendance notification).
 
@@ -191,7 +215,7 @@ Both `absenceMarkedAt` and `exitCheckedAt` are reset on server startup if their 
 **Cron configuration (.env):**
 - `CRON_ABSENCE_ENABLED` — default `true`. Set `false` to disable BOTH the entry and exit passes.
 - `CRON_TZ` — **required in production** (e.g. `America/Mexico_City`); used for the schedule AND for cutoff comparisons. See "Timezone correctness" above.
-- `ADMS_TZ_OFFSET_MINUTES` — offset in minutes between school wall-clock and UTC (e.g. `-360` for UTC−6). Used to compute local-date for daily bucketing. Set this whenever the backend does not run in the school's timezone.
+- `ADMS_TZ_OFFSET_MINUTES` — offset in minutes between school wall-clock and UTC (e.g. `-360` for UTC−6). Used to compute local-date for daily bucketing AND by `utils/school-time.js` para formatear horas al mostrar (default `-360` cuando no está definido). Set this whenever the backend does not run in the school's timezone.
 
 **Manual triggers:**
 - `POST /api/attendance/mark-absences` (JWT + admin/registrar) — entry pass only. Body: `{ date?: "YYYY-MM-DD" }`.
@@ -336,6 +360,8 @@ Historial: la convención anterior era `biometricId = controlNumber` (backfill: 
 ## Required environment (.env)
 
 `MONGO_URI`, `SECRET_KEY` (≥32 chars, used for JWT), `FIREBASE_SERVICE_ACCOUNT_PATH`, `DEVICE_TRIGGER_API_KEY`, `PORT` (default 5000), `NODE_ENV` (default `development`), `ORIGIN` (default `http://localhost:5173`).
+
+`TZ` — zona horaria del proceso. **`server.js` la fija a `America/Mexico_City` por defecto** (antes de cualquier `require`, con log `[tz] …` en consola) cuando el entorno no la define: toda la lógica de día calendario/horarios está escrita asumiendo servidor = escuela (`setHours(0,0,0,0)` para rangos "día de asistencia", `getDay()` para `isToday` de horarios, `new Date(y,m,d)`, fallbacks de parseo). En Render (contenedor UTC) sin este default, los dashboards de director/prefecta/trabajo social contaban el día desde las 18:00 h local y el `isToday` cambiaba de día tras las 18:00. Definir `TZ` en el entorno SOLO si la escuela está en otra zona (se respeta el valor explícito). Los scripts (`node scripts/…`) no cargan `server.js` y conservan el TZ del shell. `utils/school-time.js` es **inmune** a TZ (offset explícito + `timeZone: "UTC"`), no depende de esta variable.
 
 ## Special schedule days (`SchoolCalendar.type === "special_schedule"`)
 
