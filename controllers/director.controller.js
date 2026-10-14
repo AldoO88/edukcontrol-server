@@ -19,6 +19,10 @@ const ExitPass = require("../models/ExitPass.model");
 // en la hora de la escuela, no en la del servidor (en prod/UTC se desfasaba
 // al día siguiente entre las 18:00 y 24:00 h locales).
 const { formatSchoolDate } = require("../utils/school-time");
+// Asistencia de HOY desde los lectores (AttendanceLog), día escolar con
+// offset explícito — ver utils/school-day-attendance.js (bug: los
+// dashboards sumaban ClassAttendance, que estaba vacío en un día real).
+const { countTodayAttendanceByStatus } = require("../utils/school-day-attendance");
 
 // =====================================================================
 // GET /api/director/dashboard
@@ -56,19 +60,16 @@ const getDirectorDashboard = async (req, res, next) => {
 
     const currentSchoolYear = schoolDoc.current_school_year_id || null;
 
-    // 2. Estadísticas generales en paralelo
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-
+    // 2. Estadísticas generales en paralelo.
+    // La asistencia del día sale del helper (AttendanceLog de los
+    // lectores); el resto son counts en paralelo.
     const [
       totalStudents,
       maleCount,
       femaleCount,
       totalGroups,
       totalTeachers,
-      todayAttendance,
+      { dayPresent, dayRetard, dayAbsent, dayTotal },
     ] = await Promise.all([
       // Total alumnos activos
       Student.countDocuments({ school: schoolId, status: "active" }),
@@ -80,23 +81,9 @@ const getDirectorDashboard = async (req, res, next) => {
       Group.countDocuments({ school: schoolId, school_year_id: schoolYearId, type: "regular" }),
       // Total maestros activos
       User.countDocuments({ school: schoolId, role: "teacher", isActive: { $ne: false } }),
-      // Asistencia de hoy
-      ClassAttendance.find({
-        school: schoolId,
-        school_year_id: schoolYearId,
-        date: { $gte: today, $lt: tomorrow },
-      }).select("summary").lean(),
+      // Asistencia de hoy (lectores RFID/cara, alumnos únicos por status)
+      countTodayAttendanceByStatus(schoolId),
     ]);
-
-    // Calcular stats de asistencia del día
-    let dayPresent = 0;
-    let dayRetard = 0;
-    let dayAbsent = 0;
-    for (const att of todayAttendance) {
-      dayPresent += att.summary?.present || 0;
-      dayRetard += att.summary?.retard || 0;
-      dayAbsent += att.summary?.absent || 0;
-    }
 
     // 3. Reportes de conducta recientes (últimos 5)
     const recentConductLogs = await ConductLog.find({
@@ -155,7 +142,8 @@ const getDirectorDashboard = async (req, res, next) => {
       },
       // Fecha de HOY leída en la escuela (offset explícito, no el TZ del
       // servidor): en prod (UTC) este label se desfasaba tras las 18:00 h.
-      currentDate: formatSchoolDate(today, "es-MX", {
+      // formatSchoolDate aplica el offset internamente al instante real.
+      currentDate: formatSchoolDate(new Date(), "es-MX", {
         weekday: "long",
         day: "numeric",
         month: "long",
@@ -169,7 +157,10 @@ const getDirectorDashboard = async (req, res, next) => {
         dayPresent,
         dayRetard,
         dayAbsent,
-        dayTotal: dayPresent + dayRetard + dayAbsent,
+        // dayTotal viene del helper: dayPresent (on_time + late) +
+        // dayAbsent. Antes era present+retard+absent, lo que CONTABA dos
+        // veces los retardos porque ya van incluidos en dayPresent.
+        dayTotal,
       },
       recentConductLogs: recentConductLogs.map((c) => ({
         _id: c._id,
