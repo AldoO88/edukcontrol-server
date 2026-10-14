@@ -185,7 +185,9 @@ const runAbsenceMarking = async () => {
             );
             const result = await attendanceService.markAbsencesForSchool(
               school._id,
-              school.current_school_year_id
+              school.current_school_year_id,
+              undefined,
+              shift._id
             );
             totalMarked += result.marked;
             totalSkipped += result.skipped;
@@ -221,7 +223,9 @@ const runAbsenceMarking = async () => {
             );
             const result = await attendanceService.runExitCheckForSchool(
               school._id,
-              school.current_school_year_id
+              school.current_school_year_id,
+              undefined,
+              shift._id
             );
             totalExitFlagged += result.flagged;
             totalExitSkipped += result.skipped;

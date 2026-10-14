@@ -660,8 +660,11 @@ const registerAbsence = async ({ student, eventTime, device = "manual@system" })
 // Si el día tiene `special_schedule` con `special_entry_time`, el cutoff de
 // entrada (hora del log absent) se calcula con esa hora en vez del
 // `shift.startTime` del turno. Notifica push a cada tutor individualmente.
+// `targetShiftId` (opcional): procesa SOLO ese turno — el cron pasa el
+// shift._id para no marcar ausencias de otros turnos cuyo cutoff aún no
+// llegó. Sin targetShiftId se procesan todos (útil para backfill/manual).
 // Retorna { marked, skipped, date, shiftsProcessed }.
-const markAbsencesForSchool = async (schoolId, schoolYearId, targetDate) => {
+const markAbsencesForSchool = async (schoolId, schoolYearId, targetDate, targetShiftId) => {
   const date = targetDate || new Date();
   const localDate = toLocalDate(date);
   const endOfDay = new Date(localDate.getTime() + 24 * 60 * 60 * 1000);
@@ -681,12 +684,14 @@ const markAbsencesForSchool = async (schoolId, schoolYearId, targetDate) => {
     };
   }
 
-  // 2. Buscar todos los turnos activos
-  const shifts = await SchoolShift.find({
+  // 2. Buscar turnos activos — si se pasó targetShiftId, solo ese turno
+  const shiftFilter = {
     school: schoolId,
     school_year_id: schoolYearId,
     isActive: true,
-  })
+  };
+  if (targetShiftId) shiftFilter._id = targetShiftId;
+  const shifts = await SchoolShift.find(shiftFilter)
     .select("shift startTime gracePeriodMinutes name")
     .lean();
 
@@ -803,15 +808,19 @@ const markAbsencesForSchool = async (schoolId, schoolYearId, targetDate) => {
   return results;
 };
 
-// Chequeo de salida: para cada turno activo, marca `exit_missing: true` en el
-// entry log de los alumnos que SÍ entraron pero NO salieron (sin exit log del
-// día). Manda push al tutor informando "sin salida". Se llama desde el cron
-// a `shift.endTime + gracia` (o `special_exit_time + gracia`).
+// Chequeo de salida: marca `exit_missing: true` en el entry log de los
+// alumnos que SÍ entraron pero NO salieron (sin exit log del día). Manda push
+// al tutor informando "sin salida". Se llama desde el cron a
+// `shift.endTime + gracia` (o `special_exit_time + gracia`).
 // El flag se limpia automáticamente cuando el alumno registra exit (incluso
 // tarde), en registerAttendanceEvent.
 //
+// `targetShiftId` (opcional): procesa SOLO ese turno — el cron pasa el
+// shift._id para no chequear otros turnos cuyo cutoff de salida aún no llegó.
+// Sin targetShiftId se procesan todos (útil para backfill/manual).
+//
 // Retorna { flagged, skipped, date, shiftsProcessed }.
-const runExitCheckForSchool = async (schoolId, schoolYearId, targetDate) => {
+const runExitCheckForSchool = async (schoolId, schoolYearId, targetDate, targetShiftId) => {
   const date = targetDate || new Date();
   const localDate = toLocalDate(date);
   const endOfDay = new Date(localDate.getTime() + 24 * 60 * 60 * 1000);
@@ -828,12 +837,14 @@ const runExitCheckForSchool = async (schoolId, schoolYearId, targetDate) => {
     };
   }
 
-  // 2. Buscar turnos activos
-  const shifts = await SchoolShift.find({
+  // 2. Buscar turnos activos — si se pasó targetShiftId, solo ese turno
+  const shiftFilter = {
     school: schoolId,
     school_year_id: schoolYearId,
     isActive: true,
-  })
+  };
+  if (targetShiftId) shiftFilter._id = targetShiftId;
+  const shifts = await SchoolShift.find(shiftFilter)
     .select("shift startTime endTime gracePeriodMinutes name")
     .lean();
 

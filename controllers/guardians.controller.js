@@ -1510,24 +1510,22 @@ const getMyStudentSchedule = async (req, res, next) => {
 
 // GET /api/guardians/me/students/:studentId/attendance/summary
 // Resumen de asistencia del estudiante para el ciclo activo:
-// porcentaje, conteo por tipo (asistencias/faltas/retardos),
-// y lista de inasistencias recientes.
+// porcentaje, conteo (asistencias/faltas) y lista de inasistencias.
 //
-// Lógica de clasificación por día:
+// Lógica de clasificación por día (acuerdo con el cliente: NO hay retardos):
+//   - Entry con status "absent" (auto-marcado por el cron) → falta
 //   - Sin ningún entry → falta
-//   - Primer entry después de la hora de tolerancia → retardo
-//   - Primer entry a tiempo → asistencia
+//   - Cualquier entry con presencia (aunque sea tarde) → asistencia
 //
 // Query params opcionales:
 //   - school_year_id: ciclo específico (default: el activo de la escuela)
-//   - late_threshold: hora de tolerancia en formato "HH:mm" (default: "08:00")
 //
 // Pre-requisitos (middlewares):
 //   - attachSchoolContext, attachActiveSchoolYear, requireGuardianOf
 const getMyStudentAttendanceSummary = async (req, res, next) => {
   try {
     const { studentId } = req.params;
-    const { school_year_id, late_threshold = "08:00" } = req.query;
+    const { school_year_id } = req.query;
 
     if (!mongoose.Types.ObjectId.isValid(studentId)) {
       return res.status(404).json({ message: `No student with id: ${studentId}` });
@@ -1558,27 +1556,27 @@ const getMyStudentAttendanceSummary = async (req, res, next) => {
     }).sort({ event_time: 1 }).lean();
 
     // 3. Agrupar por día (YYYY-MM-DD) y clasificar
-    const dayMap = new Map(); // "2025-08-20" → { entry: Date, exit: Date }
+    const dayMap = new Map(); // "2025-08-20" → { entry: Date, status: String }
     for (const log of logs) {
       const dayKey = log.event_time.toISOString().split("T")[0];
       if (!dayMap.has(dayKey)) dayMap.set(dayKey, {});
       const day = dayMap.get(dayKey);
-      if (log.event_type === "entry" && !day.entry) day.entry = log.event_time;
+      if (log.event_type === "entry" && !day.entry) {
+        day.entry = log.event_time;
+        day.status = log.status || null;
+      }
       if (log.event_type === "exit") day.exit = log.event_time;
     }
 
-    // 4. Clasificar cada día
-    const [thresholdHour, thresholdMin] = late_threshold.split(":").map(Number);
-    const thresholdMinutes = thresholdHour * 60 + thresholdMin;
-
+    // 4. Clasificar cada día — sin retardo: entry con presencia = asistencia,
+    //    entry absent (del cron) o sin entry = falta.
     let totalAssists = 0;
     let totalAbsences = 0;
-    let totalDelays = 0;
     const recentAbsences = [];
 
     for (const [dayKey, day] of dayMap) {
-      if (!day.entry) {
-        // Sin entry = falta
+      if (!day.entry || day.status === "absent") {
+        // Sin entry, o entry auto-marcado como absent por el cron → falta
         totalAbsences++;
         recentAbsences.push({
           date: dayKey,
@@ -1587,25 +1585,18 @@ const getMyStudentAttendanceSummary = async (req, res, next) => {
           description: "Sin registro de entrada.",
         });
       } else {
-        // Calcular si llegó tarde
-        const entryTime = new Date(day.entry);
-        const entryMinutes = entryTime.getHours() * 60 + entryTime.getMinutes();
-        if (entryMinutes > thresholdMinutes) {
-          totalDelays++;
-        } else {
-          totalAssists++;
-        }
+        // Cualquier entry con presencia cuenta como asistencia
+        totalAssists++;
       }
     }
 
     // Ordenar inasistencias por fecha descendente (más recientes primero)
     recentAbsences.sort((a, b) => b.date.localeCompare(a.date));
 
-    // 5. Calcular porcentaje (retardos cuentan como asistencia)
+    // 5. Calcular porcentaje (sin retardos: asistencia = totalAssists)
     const totalDays = dayMap.size;
-    const totalAttended = totalAssists + totalDelays;
     const percentage = totalDays > 0
-      ? Math.round((totalAttended / totalDays) * 10000) / 100
+      ? Math.round((totalAssists / totalDays) * 10000) / 100
       : null;
 
     // 6. Determinar label de progreso
@@ -1629,10 +1620,8 @@ const getMyStudentAttendanceSummary = async (req, res, next) => {
         percentage,
         total_assists: totalAssists,
         total_absences: totalAbsences,
-        total_delays: totalDelays,
         total_days: totalDays,
         progress_label: progressLabel,
-        late_threshold,
       },
       recent_absences: recentAbsences.slice(0, 10),
     });
@@ -1645,17 +1634,21 @@ const getMyStudentAttendanceSummary = async (req, res, next) => {
 // Historial de entradas/salidas agrupado por día.
 // Devuelve los últimos N días con su entrada, salida y estado.
 //
+// Lógica de estado (sin retardos — acuerdo con el cliente):
+//   - Entry con status "absent" → FALTA
+//   - Sin entry → FALTA
+//   - Cualquier entry con presencia → ASISTENCIA
+//
 // Query params opcionales:
 //   - school_year_id: ciclo específico (default: el activo)
 //   - days: cuántos días hacia atrás (default: 30, max: 90)
-//   - late_threshold: hora de tolerancia (default: "08:00")
 //
 // Pre-requisitos (middlewares):
 //   - attachSchoolContext, attachActiveSchoolYear, requireGuardianOf
 const getMyStudentAttendanceHistory = async (req, res, next) => {
   try {
     const { studentId } = req.params;
-    const { school_year_id, days: daysParam, late_threshold = "08:00" } = req.query;
+    const { school_year_id, days: daysParam } = req.query;
 
     if (!mongoose.Types.ObjectId.isValid(studentId)) {
       return res.status(404).json({ message: `No student with id: ${studentId}` });
@@ -1693,27 +1686,29 @@ const getMyStudentAttendanceHistory = async (req, res, next) => {
     const dayMap = new Map();
     for (const log of logs) {
       const dayKey = log.event_time.toISOString().split("T")[0];
-      if (!dayMap.has(dayKey)) dayMap.set(dayKey, { entries: [], exits: [] });
+      if (!dayMap.has(dayKey)) dayMap.set(dayKey, { entries: [], exits: [], statuses: [] });
       const day = dayMap.get(dayKey);
-      if (log.event_type === "entry") day.entries.push(log.event_time);
-      else day.exits.push(log.event_time);
+      if (log.event_type === "entry") {
+        day.entries.push(log.event_time);
+        day.statuses.push(log.status || null);
+      } else day.exits.push(log.event_time);
     }
 
     // 4. Construir respuesta ordenada por fecha descendente
-    const [thresholdHour, thresholdMin] = late_threshold.split(":").map(Number);
-    const thresholdMinutes = thresholdHour * 60 + thresholdMin;
-
+    //    Sin retardo: entry con presencia = ASISTENCIA; absent o sin entry = FALTA.
     const history = [];
     for (const [dayKey, day] of dayMap) {
       // Primera entrada y última salida del día
       const firstEntry = day.entries.length > 0 ? day.entries[0] : null;
       const lastExit = day.exits.length > 0 ? day.exits[day.exits.length - 1] : null;
 
-      // Determinar estado
-      let status = "NO_ENTRY";
-      if (firstEntry) {
-        const entryMinutes = firstEntry.getHours() * 60 + firstEntry.getMinutes();
-        status = entryMinutes > thresholdMinutes ? "DELAY" : "ON_TIME";
+      // Determinar estado: si el entry es absent (del cron) o no hay entry → falta
+      const entryIsAbsent = day.statuses.some((s) => s === "absent");
+      let status;
+      if (!firstEntry || entryIsAbsent) {
+        status = "NO_ENTRY";
+      } else {
+        status = "ON_TIME";
       }
 
       const formatTime = (d) => {
@@ -1736,11 +1731,10 @@ const getMyStudentAttendanceHistory = async (req, res, next) => {
       history.push({
         date: dayKey,
         date_formatted: formatDate(new Date(dayKey + "T12:00:00")),
-        entry: formatTime(firstEntry),
+        entry: status === "NO_ENTRY" ? null : formatTime(firstEntry),
         exit: formatTime(lastExit),
         status,
-        status_label: status === "ON_TIME" ? "A TIEMPO" :
-                      status === "DELAY" ? "RETARDO" : "SIN REGISTRO",
+        status_label: status === "ON_TIME" ? "ASISTENCIA" : "FALTA",
       });
     }
 

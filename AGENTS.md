@@ -154,13 +154,13 @@ The system automatically marks students as absent if they don't tap the biometri
 **Pass 1 — Ausencias (entrada).**
 1. Per shift: skip if `absenceMarkedAt` is today (idempotency).
 2. Skip if the entry cutoff (`shift.startTime + gracePeriodMinutes`, or `special_entry_time + gracia` on a special day) has not been reached in `CRON_TZ`.
-3. Call `markAbsencesForSchool(school, year)`. For each active student with NO entry log for today, create a `status: "absent"` log at the cutoff time and push a "AUSENCIA" notification.
+3. Call `markAbsencesForSchool(school, year, undefined, shift._id)`. For each active student of THAT shift with NO entry log for today, create a `status: "absent"` log at the cutoff time and push a "AUSENCIA" notification. The `shift._id` param (`targetShiftId`) scopes the run to one shift — without it (backfill/manual) all shifts are processed, which in multi-shift schools could mark students of a shift whose cutoff hasn't arrived yet.
 4. Set `absenceMarkedAt = now` (even when nothing was marked — the gate is "did we attempt today", not "did we mark anything").
 
 **Pass 2 — Chequeo de salidas.**
 1. Per shift: skip if `exitCheckedAt` is today.
 2. Skip if the exit cutoff (`shift.endTime + gracePeriodMinutes`, or `special_exit_time + gracia`) has not been reached in `CRON_TZ`.
-3. Call `runExitCheckForSchool(school, year)`. For each active student with an entry log of today (status NOT absent) and NO exit log of today, set `exit_missing: true` + `exit_missing_at: now` on the entry log and push a "SIN SALIDA" notification.
+3. Call `runExitCheckForSchool(school, year, undefined, shift._id)`. For each active student with an entry log of today (status NOT absent) and NO exit log of today, set `exit_missing: true` + `exit_missing_at: now` on the entry log and push a "SIN SALIDA" notification. Same `targetShiftId` scoping as pass 1.
 4. Set `exitCheckedAt = now`.
 
 Both `absenceMarkedAt` and `exitCheckedAt` are reset on server startup if their value is from yesterday (`resetStaleMarkers` in `config/cron.js`).
@@ -183,8 +183,8 @@ Both `absenceMarkedAt` and `exitCheckedAt` are reset on server startup if their 
 - `isSchoolDay(school, schoolYearId, date)` — checks `SchoolCalendar`. Returns `{ isSchoolDay, reason, special_entry_time?, special_exit_time? }`. `special_schedule` entries are LECTIVE days with override times.
 - `isAfterGracePeriod(student, eventTime)` — cutoff from `special_entry_time ?? shift.startTime` + grace.
 - `resolveLateArrival({...})` — flips absent → on_time.
-- `markAbsencesForSchool(schoolId, schoolYearId, targetDate?)` — main entry cron function.
-- `runExitCheckForSchool(schoolId, schoolYearId, targetDate?)` — main exit cron function.
+- `markAbsencesForSchool(schoolId, schoolYearId, targetDate?, targetShiftId?)` — main entry cron function. `targetShiftId` scopes to one shift (cron passes it); omit for all shifts (backfill/manual).
+- `runExitCheckForSchool(schoolId, schoolYearId, targetDate?, targetShiftId?)` — main exit cron function. Same `targetShiftId` semantics.
 
 **Cron configuration (.env):**
 - `CRON_ABSENCE_ENABLED` — default `true`. Set `false` to disable BOTH the entry and exit passes.
