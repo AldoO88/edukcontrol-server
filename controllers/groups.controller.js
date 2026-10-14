@@ -2,6 +2,8 @@
 // Operaciones CRUD sobre el recurso Group, con aislamiento multi-tenant.
 const mongoose = require("mongoose");
 const Group = require("../models/Group.model");
+const GroupTemplate = require("../models/GroupTemplate.model");
+const SchoolYear = require("../models/SchoolYear.model");
 const Enrollment = require("../models/Enrollment.model");
 const ClassSchedule = require("../models/ClassSchedule.model");
 const SchoolShift = require("../models/SchoolShift.model");
@@ -68,6 +70,107 @@ const createGroup = async (req, res, next) => {
 
     const newGroup = await Group.create(payload);
     res.status(201).json(newGroup);
+  } catch (error) {
+    next(error);
+  }
+};
+
+// POST /api/groups/import-templates
+// Clona plantillas de grupo (catálogo de la escuela, GroupTemplate) al
+// ciclo indicado. Pensado en la pantalla "Grupos" del ciclo: si al crear
+// el ciclo se olvidó un grupo, se jala aquí desde la configuración.
+//
+// Body: { school_year_id, template_ids: [ObjectId, ...] }
+//
+// Garantías:
+//   - El `school` se resuelve DESDE el ciclo (nunca del body): imposible
+//     importar plantillas de otra escuela.
+//   - Dedupe por la llave única del modelo {school, grade, section,
+//     school_year_id}: si el grupo ya existe en el ciclo se cuenta como
+//     `skipped`, no como error (dos admins importando a la vez tampoco
+//     rompen: un E11000 también cuenta como skip).
+//   - La request NUNCA falla completa por 1 duplicado: responde
+//     { created, skipped, items }.
+const importTemplatesFromCatalog = async (req, res, next) => {
+  try {
+    const { school_year_id, template_ids } = req.body || {};
+
+    if (!mongoose.Types.ObjectId.isValid(String(school_year_id))) {
+      return res.status(400).json({ message: "school_year_id is required." });
+    }
+    const ids = Array.isArray(template_ids)
+      ? template_ids.filter((id) => mongoose.Types.ObjectId.isValid(String(id)))
+      : [];
+    if (ids.length === 0) {
+      return res.status(400).json({ message: "template_ids must be a non-empty array of ObjectIds." });
+    }
+
+    // El ciclo debe existir y pertenecer al tenant (super_admin pasa sin
+    // tenantFilter; el resto solo ve su escuela).
+    const year = await SchoolYear.findOne({
+      _id: school_year_id,
+      ...tenantFilter(req),
+    }).lean();
+    if (!year) {
+      return res.status(404).json({ message: "School year not found." });
+    }
+
+    // School resuelto desde el ciclo — no se confía en el body.
+    const school = year.school;
+
+    // Plantillas del catálogo de ESA escuela (un id de otra escuela no
+    // matchea y simplemente no se importa).
+    const templates = await GroupTemplate.find({
+      _id: { $in: ids },
+      school,
+    }).lean();
+    if (templates.length === 0) {
+      return res.status(404).json({ message: "No matching group templates found." });
+    }
+
+    const created = [];
+    let skipped = 0;
+
+    for (const tpl of templates) {
+      // Dedupe: ¿ya existe un grupo con el mismo grade+section en el ciclo?
+      const exists = await Group.findOne({
+        school,
+        grade: tpl.grade,
+        section: tpl.section,
+        school_year_id: year._id,
+      })
+        .select("_id")
+        .lean();
+      if (exists) {
+        skipped += 1;
+        continue;
+      }
+
+      try {
+        const group = await Group.create({
+          school,
+          school_year_id: year._id,
+          grade: tpl.grade,
+          section: tpl.section,
+          shift: tpl.shift,
+          type: tpl.type || "regular",
+        });
+        created.push(group);
+      } catch (err) {
+        // E11000 = carrera con otra importación simultánea → skip, no error.
+        if (err && err.code === 11000) {
+          skipped += 1;
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    res.status(201).json({
+      created: created.length,
+      skipped,
+      items: created,
+    });
   } catch (error) {
     next(error);
   }
@@ -446,6 +549,7 @@ const getGroupSchedule = async (req, res, next) => {
 module.exports = {
   getAllGroups,
   createGroup,
+  importTemplatesFromCatalog,
   getGroupById,
   updateGroup,
   deleteGroup,

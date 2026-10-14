@@ -101,7 +101,8 @@ All under `/api` (no `/v1` prefix). Auth endpoints are under `/auth` (no `/api` 
 | DELETE | `/api/students/:studentId` | JWT + `admin`/`registrar` | |
 | POST | `/api/students/:studentId/photo` | JWT + `admin`/`registrar`/`super_admin` | `multipart/form-data` field `photo` (JPEG/PNG/WebP, ≤5MB). El cliente **debe** recortar la imagen manualmente con un encuadre cuadrado (modal en el expediente) antes de subirla; el backend solo la re-escala a 300x300 WebP con `crop: "fill"` en Cloudinary. |
 | GET | `/api/groups` | JWT + any staff role | Filtros: `school_year_id`, `grade`, `section`. Acepta `?school=<oid>` **solo para super_admin**. |
-| POST | `/api/groups` | JWT + `admin`/`registrar` | |
+| POST | `/api/groups` | JWT + `admin`/`registrar`/`super_admin` | `super_admin` debe enviar `school` en el body. |
+| POST | `/api/groups/import-templates` | JWT + `admin`/`registrar`/`super_admin` | Clona plantillas (`GroupTemplate`) al ciclo: body `{ school_year_id, template_ids[] }`. El `school` se resuelve desde el ciclo; dedupe por grade+section (responde `{created, skipped, items}`). |
 | GET/PUT/DELETE | `/api/groups/:groupId` | JWT + role-scoped | |
 | GET | `/api/groups/:groupId/students` | JWT + staff | Estudiantes históricos de un grupo (todos los ciclos). |
 | GET/POST | `/api/enrollments` | JWT + role-scoped | |
