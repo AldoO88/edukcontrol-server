@@ -142,6 +142,29 @@ const createTeacherSubject = async (req, res, next) => {
       group_id,
       school_year_id,
     });
+
+    // Auto-set de head_teacher_id en grupos taller (gap de UI):
+    // al asignar una materia WORKSHOP (ej. Tecnología) contra un grupo
+    // taller sin maestro, seteamos el head_teacher al maestro recién
+    // asignado. El dropdown de Horarios exige que cada grupo taller tenga
+    // head_teacher_id + TeacherSubject (ese mismo maestro) para mostrar
+    // Tecnología transversal; sin esto una escuela montada 100% por la web
+    // queda bloqueada (ningún form web setea head_teacher_id).
+    // Best-effort: no falla la creación del TS si el update del grupo falla.
+    if (group.type === "taller" && subject.classificationType === "WORKSHOP" && !group.head_teacher_id) {
+      try {
+        await Group.updateOne(
+          { _id: group._id, head_teacher_id: null },
+          { $set: { head_teacher_id: teacher_id } }
+        );
+      } catch (headErr) {
+        console.warn(
+          `[teacher-subjects] No se pudo auto-setear head_teacher_id en grupo taller ${group._id}:`,
+          headErr.message
+        );
+      }
+    }
+
     res.status(201).json(assignment);
   } catch (error) {
     // Duplicate key (mismo teacher+subject+group+year)
