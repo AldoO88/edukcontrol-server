@@ -378,6 +378,26 @@ const getGroupSchedule = async (req, res, next) => {
           tallerGroupIds.push(s.workshop_group_id);
         }
       }
+
+      // FALLBACK (2026-10-14): si NINGÚN alumno del grupo tiene todavía
+      // workshop_group_id asignado (la distribución a talleres se carga
+      // desde web y aún no se hizo), incluir los talleres del MISMO grado
+      // para que el horario del grupo muestre el bloque de Tecnología.
+      // La deduplicación posterior (subject_id + start + end) colapsa las
+      // secciones de taller del grado en una sola tarjeta por materia.
+      if (tallerGroupIds.length === 0) {
+        const gradeTalleres = await Group.find({
+          school: schoolId,
+          school_year_id: schoolYearId,
+          type: "taller",
+          grade: group.grade,
+        })
+          .select("_id")
+          .lean();
+        for (const t of gradeTalleres) {
+          tallerGroupIds.push(t._id);
+        }
+      }
     }
 
     // 2. Buscar ClassSchedule del grupo de origen + grupos taller

@@ -8,6 +8,7 @@ const User = require("../models/User.model");
 const Student = require("../models/Student.model");
 const School = require("../models/School.model");
 const Grade = require("../models/Grade.model");
+const Group = require("../models/Group.model");
 const Enrollment = require("../models/Enrollment.model");
 const AttendanceLog = require("../models/AttendanceLog.model");
 const ConductLog = require("../models/ConductLog.model");
@@ -1386,11 +1387,40 @@ const getMyStudentSchedule = async (req, res, next) => {
     //     a su taller, así que sin esto el horario mostraría huecos.
     const student = await Student.findOne({ _id: studentId, school: req.school }).lean();
 
-    // 2. Buscar los ClassSchedule del grupo (de origen) y del taller para este ciclo
-    const groupIds = [group._id];
+    // Set de grupos taller cuyo horario se fusiona: el del propio alumno
+    // (si ya fue asignado) + el fallback por grado (ver abajo).
+    const tallerGroupIds = [];
     if (student && student.workshop_group_id) {
-      groupIds.push(student.workshop_group_id);
+      tallerGroupIds.push(student.workshop_group_id);
     }
+
+    // FALLBACK (2026-10-14): si el alumno todavía NO tiene
+    // workshop_group_id asignado (la distribución a talleres se carga
+    // desde web y puede no haberse hecho), incluir los talleres del
+    // MISMO grado para que el horario del tutor muestre el bloque de
+    // Tecnología aunque no exista distribución. La deduplicación
+    // posterior (subject + start + end) colapsa las secciones del grado
+    // (que comparten materia y bloques) en una sola fila por materia.
+    if (tallerGroupIds.length === 0 && (group.type || "regular") === "regular") {
+      const gradeTalleres = await Group.find({
+        school: req.school,
+        school_year_id: schoolYear._id,
+        type: "taller",
+        grade: group.grade,
+      })
+        .select("_id")
+        .lean();
+      for (const t of gradeTalleres) {
+        tallerGroupIds.push(t._id);
+      }
+    }
+
+    // Set para marcar is_taller en cada sesión (tanto el taller propio
+    // del alumno como los del fallback del grado).
+    const tallerGroupIdSet = new Set(tallerGroupIds.map(String));
+
+    // 2. Buscar los ClassSchedule del grupo (de origen) y de los talleres
+    const groupIds = [group._id, ...tallerGroupIds];
 
     const schedules = await ClassSchedule.find({
       school: req.school,
@@ -1409,11 +1439,9 @@ const getMyStudentSchedule = async (req, res, next) => {
       const shift = cs.school_shift_id;
       if (!shift || !cs.scheduleSlots) continue;
 
-      // Marcar si la sesión pertenece al grupo taller del estudiante
-      const isTaller =
-        student &&
-        student.workshop_group_id &&
-        String(cs.group_id) === String(student.workshop_group_id);
+      // Marcar si la sesión pertenece a un grupo taller (el asignado al
+      // alumno o los del fallback por grado).
+      const isTaller = tallerGroupIdSet.has(String(cs.group_id));
 
       for (const slot of cs.scheduleSlots) {
         const day = slot.dayOfWeek;
@@ -1444,6 +1472,21 @@ const getMyStudentSchedule = async (req, res, next) => {
           is_taller: isTaller || false,
         });
       }
+    }
+
+    // 3b. Deduplicar filas de taller por subject + horario: el fallback
+    //     trae TODAS las secciones de taller del grado (que comparten
+    //     materia y bloques) — sin esto se repetiría "TECNOLOGÍA" una vez
+    //     por sección cada día. Solo aplica a filas is_taller.
+    for (const day of Object.keys(scheduleByDay)) {
+      const seen = new Set();
+      scheduleByDay[day] = scheduleByDay[day].filter((entry) => {
+        if (!entry.is_taller) return true;
+        const key = `${entry.subject_id}-${entry.start}-${entry.end}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
     }
 
     // 4. Inyectar el/los receso(s) de la campana (SchoolShift con isBreak: true)
