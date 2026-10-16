@@ -1247,6 +1247,26 @@ const importStudentsFromSpreadsheet = async (req, res, next) => {
         guardianLastName,
         guardianPhone: String(keys.tutortelefono || keys.guardianphone || keys.guardian_phone || "").trim() || null,
         guardianRelationship: String(keys.tutorparentesco || keys.guardianrelationship || keys.guardian_relationship || "").trim() || "tutor legal",
+        // Segundo tutor (opcional): columnas `tutor2_*` (aliases
+        // `guardian2*`). Misma heurística de nombre+apellido que el
+        // tutor legal. SIN default de parentesco: si viene incompleto
+        // (falta nombre, teléfono o parentesco) se omite con warning —
+        // no debe heredar "tutor legal" porque ese rol es del primer
+        // tutor de la ficha de inscripción.
+        guardian2Name: (() => {
+          const raw = String(keys.tutor2nombre || keys.tutor2name || keys.guardian2nombre || keys.guardian2name || "").trim();
+          return raw ? raw.split(/\s+/).filter(Boolean)[0] || null : null;
+        })(),
+        guardian2LastName: (() => {
+          const rawName = String(keys.tutor2nombre || keys.tutor2name || keys.guardian2nombre || keys.guardian2name || "").trim();
+          const rawLast = String(keys.tutor2apellido || keys.tutor2lastname || keys.guardian2apellido || keys.guardian2lastname || "").trim();
+          if (!rawName) return rawLast || null;
+          if (rawLast) return rawLast;
+          const parts = rawName.split(/\s+/).filter(Boolean);
+          return parts.length > 1 ? parts.slice(1).join(" ") : "";
+        })(),
+        guardian2Phone: String(keys.tutor2telefono || keys.tutor2phone || keys.guardian2telefono || keys.guardian2phone || "").trim() || null,
+        guardian2Relationship: String(keys.tutor2parentesco || keys.tutor2relationship || keys.guardian2parentesco || keys.guardian2relationship || "").trim() || null,
       });
     }
 
@@ -1416,6 +1436,134 @@ const importStudentsFromSpreadsheet = async (req, res, next) => {
               guardianWarned = true;
             }
           }
+        }
+
+        // --------------------------------------------------------
+        // SEGUNDO TUTOR (opcional): otro padre con capacidad de
+        // trámite. Mismas garantías que el tutor legal: reuso por
+        // {school, phone} (padre que ya es tutor de un hermano),
+        // ensureTutorUser para sus credenciales propias (activación
+        // con OTP a SU celular) y vínculo en ambos lados. El tutor
+        // legal de la ficha queda en guardians[0] y este entra AL
+        // FINAL ($addToSet / Set), así las vistas legales
+        // (credencial, reports, citatorios) siguen mostrándolo a él.
+        // Columnas incompletas → se omite con warning; NO se crea
+        // un guardian a medias.
+        // --------------------------------------------------------
+        const wantsGuardian2 =
+          item.guardian2Name || item.guardian2Phone || item.guardian2Relationship;
+        if (item.guardian2Phone && item.guardian2Name && item.guardian2Relationship) {
+          const existingGuardian2 = await Guardian.findOne({ school, phone: item.guardian2Phone });
+          let guardian2 = null;
+          if (existingGuardian2) {
+            guardian2 = existingGuardian2;
+            // Solo rellenar campos vacíos (mismo criterio que el
+            // tutor legal: el teléfono identifica al tutor).
+            const fillIfEmpty2 =
+              (item.guardian2Name && (!guardian2.name || !guardian2.name.trim())) ||
+              (item.guardian2LastName && (!guardian2.lastname || !guardian2.lastname.trim())) ||
+              (item.guardian2Relationship && (!guardian2.relationship || !guardian2.relationship.trim()));
+            if (fillIfEmpty2) {
+              if (item.guardian2Name && (!guardian2.name || !guardian2.name.trim())) guardian2.name = item.guardian2Name.trim();
+              if (item.guardian2LastName && (!guardian2.lastname || !guardian2.lastname.trim())) guardian2.lastname = item.guardian2LastName.trim();
+              if (item.guardian2Relationship && (!guardian2.relationship || !guardian2.relationship.trim())) guardian2.relationship = item.guardian2Relationship.trim();
+              await guardian2.save();
+            }
+          } else {
+            try {
+              guardian2 = await Guardian.create({
+                school,
+                name: item.guardian2Name,
+                lastname: item.guardian2LastName || "",
+                phone: item.guardian2Phone,
+                relationship: item.guardian2Relationship,
+                students: [student._id],
+                notification_prefs: {
+                  whatsapp: {
+                    opted_in: true,
+                    opted_in_at: new Date(),
+                    source: "imported_seed",
+                  },
+                },
+              });
+            } catch (g2Err) {
+              warnings.push({
+                index: item.index,
+                curp: item.curp,
+                status: "warning",
+                errors: [
+                  `Segundo tutor no creado (${g2Err.code === 11000 ? "teléfono duplicado" : g2Err.message})`,
+                ],
+              });
+            }
+          }
+
+          if (guardian2) {
+            // Vínculo en el lado del alumno (Set → sin duplicados,
+            // el tutor legal de arriba conserva la posición [0]).
+            student.guardians = Array.from(
+              new Set([...(student.guardians || []).map(String), guardian2._id.toString()])
+            ).map((id) => new mongoose.Types.ObjectId(id));
+            await student.save();
+
+            // Mirror del lado del guardian si fue reusado (el nuevo
+            // ya nació con students: [student._id]).
+            if (existingGuardian2) {
+              await Guardian.updateOne(
+                { _id: guardian2._id },
+                { $addToSet: { students: student._id } }
+              );
+            }
+
+            // Credenciales propias del segundo tutor: su User con SU
+            // celular → se activa en la app con OTP a su número y
+            // entra con su propia contraseña.
+            const tut2Res = await ensureTutorUser({
+              school,
+              name: guardian2.name,
+              lastname: guardian2.lastname,
+              phone: guardian2.phone,
+            });
+            if (tut2Res.ok) {
+              if (
+                !guardian2.user_id ||
+                guardian2.user_id.toString() !== tut2Res.user._id.toString()
+              ) {
+                guardian2.user_id = tut2Res.user._id;
+                await guardian2.save();
+              }
+              if (!guardian2.notification_prefs?.whatsapp?.opted_in) {
+                await Guardian.updateOne(
+                  { _id: guardian2._id },
+                  {
+                    $set: {
+                      "notification_prefs.whatsapp": {
+                        opted_in: true,
+                        opted_in_at: new Date(),
+                        source: "imported_seed",
+                      },
+                    },
+                  }
+                );
+              }
+            } else if (tut2Res.reason === "phone_taken") {
+              warnings.push({
+                index: item.index,
+                curp: item.curp,
+                status: "warning",
+                errors: [`Segundo tutor: ${tut2Res.message}`],
+              });
+            }
+          }
+        } else if (wantsGuardian2) {
+          warnings.push({
+            index: item.index,
+            curp: item.curp,
+            status: "warning",
+            errors: [
+              "Segundo tutor omitido: faltan datos (se requiere nombre, teléfono y parentesco).",
+            ],
+          });
         }
 
         const enrollment = await Enrollment.create({
