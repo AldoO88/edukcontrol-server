@@ -45,11 +45,17 @@ const ADMIN_LIKE_ROLES = ["admin", "registrar", "super_admin"];
 // cross-tenant y el front SIEMPRE está dentro de una escuela/ciclo),
 // deriva el `school` del SchoolYear indicado.
 const schoolForYear = async (db, payloadSchoolId, yearOid) => {
-  if (payloadSchoolId) return payloadSchoolId;
+  // ObjectId, NO string (bug 2026-10-16): el resultado se alimenta a
+  // collection("enrollments").distinct(...) del driver NATIVO, que no
+  // castea — con `school: "hex"` el filtro no matcheaba nada → el listado
+  // de tutores filtrado por grupo salía vacío y "con hijos en ciclo" = 0.
+  if (payloadSchoolId)
+    return new mongoose.Types.ObjectId(String(payloadSchoolId));
   if (!yearOid) return null;
   const year = await db
     .collection("schoolyears")
     .findOne({ _id: yearOid }, { projection: { school: 1 } });
+  // Doc nativo: year.school ya es ObjectId en la BD.
   return year?.school || null;
 };
 
@@ -166,8 +172,11 @@ const getAllGuardians = async (req, res, next) => {
       if (school_year_id && mongoose.Types.ObjectId.isValid(String(school_year_id))) {
         yearOid = new mongoose.Types.ObjectId(String(school_year_id));
       } else if (req.payload.schoolId) {
+        // ObjectId en _id: el driver NATIVO no castea strings → con el
+        // schoolId del JWT (string) el findOne devolvía null y el filtro
+        // por grupo quedaba sin yearOid (lista vacía). Bug 2026-10-16.
         const school = await db.collection("schools").findOne(
-          { _id: req.payload.schoolId },
+          { _id: new mongoose.Types.ObjectId(String(req.payload.schoolId)) },
           { projection: { current_school_year_id: 1 } }
         );
         yearOid = school?.current_school_year_id || null;
@@ -278,9 +287,14 @@ const getGuardiansStats = async (req, res, next) => {
     if (school_year_id && mongoose.Types.ObjectId.isValid(String(school_year_id))) {
       activeSchoolYearId = new mongoose.Types.ObjectId(String(school_year_id));
     } else if (req.payload.schoolId) {
+      // ObjectId en _id (driver nativo no castea strings — bug 2026-10-16,
+      // ver comentario similar en el filtro por grupo más arriba): sin el
+      // casteo el findOne devolvía null y `activeSchoolYearId` no se
+      // resolvía nunca sin query param → cortes "con hijos en ciclo" y
+      // "alumnos sin tutor" en 0 para admin de escuela.
       const school = await db
         .collection("schools")
-        .findOne({ _id: req.payload.schoolId }, { projection: { current_school_year_id: 1 } });
+        .findOne({ _id: new mongoose.Types.ObjectId(String(req.payload.schoolId)) }, { projection: { current_school_year_id: 1 } });
       activeSchoolYearId = school?.current_school_year_id || null;
     }
 
@@ -299,6 +313,10 @@ const getGuardiansStats = async (req, res, next) => {
         ...tenant,
         $or: [{ students: { $size: 0 } }, { students: { $exists: false } }],
       }),
+      // tenantFilter devuelve `school` como ObjectId desde el fix
+      // 2026-10-16: el aggregation pipeline NO castea strings, así que
+      // antes este $match no matcheaba ningún doc y "Con cuenta activa"
+      // respondía siempre 0 en la web de administración.
       Guardian.aggregate([
         { $match: { ...tenant, user_id: { $ne: null } } },
         {

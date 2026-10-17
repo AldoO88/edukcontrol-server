@@ -31,6 +31,21 @@
 //   };
 const mongoose = require("mongoose");
 
+// Convierte el school a ObjectId para que funcione en TODOS los consumidores
+// del filtro: las queries de Mongoose (find/countDocuments/updateOne) lo
+// reciben tal cual (casteo no-op) y — lo crítico — el aggregation pipeline
+// de Mongoose y el driver nativo (collection().distinct/findOne), que NO
+// convierten strings a ObjectId. Bug prod 2026-10-16: con `{ school: "hex" }`
+// esos contextos no matcheaban NUNCA → stats "con cuenta activa" en 0 y
+// filtro por taller vacío en la lista de tutores. Valores no válidos se
+// devuelven tal cual (matchean nada, mismo comportamiento previo).
+const schoolOid = (v) => {
+  if (v == null) return v;
+  return mongoose.Types.ObjectId.isValid(String(v))
+    ? new mongoose.Types.ObjectId(String(v))
+    : v;
+};
+
 // Devuelve el filtro `{ school }` (o `{}` si aplica) para la request.
 // Lanza `Error` con `status: 400` si `?school=` no es un ObjectId válido.
 const tenantFilter = (req) => {
@@ -38,7 +53,7 @@ const tenantFilter = (req) => {
 
   // Roles normales: tenant fijo por JWT. Jamás se lee el query.
   if (role !== "super_admin") {
-    return { school: req.payload.schoolId };
+    return { school: schoolOid(req.payload.schoolId) };
   }
 
   // super_admin sin scope → sin filtro (comportamiento histórico).
@@ -53,7 +68,8 @@ const tenantFilter = (req) => {
     throw error;
   }
 
-  return { school: String(raw) };
+  // ObjectId, no string: ver comentario de schoolOid arriba.
+  return { school: schoolOid(String(raw)) };
 };
 
 module.exports = { tenantFilter };

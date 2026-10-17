@@ -23,6 +23,7 @@
 // que agrupar por (student_id, status) no sobre-cuenta.
 // ---------------------------------------------------------------------
 
+const mongoose = require("mongoose");
 const AttendanceLog = require("../models/AttendanceLog.model");
 const { toSchoolDate } = require("./school-time");
 
@@ -45,13 +46,27 @@ const countTodayAttendanceByStatus = async (schoolId) => {
   );
   const dayEndUtc = new Date(dayStartUtc.getTime() + 24 * 60 * 60 * 1000);
 
+  // ALIAS DE ESCUELA — casteo OBLIGATORIO (bug prod 2026-10-16):
+  // los callers pasan `req.school`, que es un STRING (el middleware
+  // tenant-context hace `String(schoolId)`). A diferencia de
+  // find/countDocuments, Mongoose NO castea el aggregation pipeline y el
+  // driver nativo tampoco — en MongoDB `ObjectId("6abc…") !== "6abc…"`,
+  // así que `{ school: "hex" }` en un $match NO coincide NUNCA y el
+  // dashboard respondía "Presentes 0, Faltas 0" aunque hubiera cientos
+  // de eventos de asistencia en el día. Con `school: schoolId` crudo la
+  // query devolvía [] (verificado empíricamente contra Atlas: string →
+  // 0 docs, ObjectId → los cientos reales del día).
+  // new ObjectId acepta tanto el string hex como una instancia ObjectId
+  // (doble wrap es no-op), así que es seguro para cualquier caller.
+  const schoolOid = new mongoose.Types.ObjectId(String(schoolId));
+
   // Alumnos únicos por status: agrupa primero por (alumno, status) y
   // luego cuenta, así un alumno con dos docs (caso edge) cuenta 1 vez
   // por status.
   const byStatus = await AttendanceLog.aggregate([
     {
       $match: {
-        school: schoolId,
+        school: schoolOid,
         event_type: "entry",
         status: { $in: ["on_time", "late", "absent"] },
         event_time: { $gte: dayStartUtc, $lt: dayEndUtc },
