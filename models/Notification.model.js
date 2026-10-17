@@ -170,6 +170,30 @@ notificationSchema.index({ user_id: 1, read_at: 1, sent_at: -1 });
 // 3) Por school + kind (analytics, debugging).
 notificationSchema.index({ school: 1, kind: 1, sent_at: -1 });
 
+// ============================================================
+// TTL de retención (borrado automático por MongoDB)
+// ============================================================
+// Las notificaciones EXPIRAN a los 90 días (2026-10-17): cada doc
+// guarda datos de menores (nombre + evento de asistencia/citatorio)
+// y no debe retenerse PII indefinidamente (minimización de datos).
+// 90 días cubren el propósito de auditoría/debug del modelo ("¿por
+// qué no llegó la push a X?") — nadie investiga incidentes de hace
+// más. MongoDB borra los docs solo (~cada 60s), sin cron propio.
+//
+// La ventana de UX de la campanita (badge/lista = últimos 30 días)
+// vive en services/notifications.service.js (VENTANA_DIAS): la
+// ventana es solo VISUAL, este TTL es el borrado FÍSICO.
+//
+// OJO: el TTL va sobre `createdAt` y NO sobre `sent_at` aunque las
+// queries usen sent_at — ya existe un índice llano {sent_at:1}
+// (index: true en el campo) y MongoDB no permite dos índices con el
+// mismo key pattern (migrarlo exigiría dropearlo a mano en Atlas).
+// createdAt ≡ sent_at en la práctica: ambos se setean al ingresar.
+notificationSchema.index(
+  { createdAt: 1 },
+  { expireAfterSeconds: 90 * 24 * 60 * 60, name: "notifications_ttl_90d" }
+);
+
 const Notification = model("Notification", notificationSchema);
 
 module.exports = Notification;

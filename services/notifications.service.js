@@ -19,6 +19,23 @@
 const Notification = require("../models/Notification.model");
 
 // ---------------------------------------------------------------------
+// Ventana de la campanita (mejor práctica UX, 2026-10-17)
+// ---------------------------------------------------------------------
+// Badge (unread-count) y lista solo consideran notificaciones de los
+// últimos VENTANA_DIAS días. Por qué: un badge que acumula no leídas
+// de SIEMPRE se vuelve ruido y el usuario deja de mirarlo (el "efecto
+// lloriqueo del lobo"); lo más viejo no leído expira visualmente
+// solo. Nada se borra con esto — el borrado FÍSICO es el TTL de 90
+// días sobre createdAt que define Notification.model.js (auditoría
+// + minimización de PII de menores).
+const VENTANA_DIAS = 30;
+
+// Filtro de ventana reutilizable (lista + unread-count).
+const ventanaReciente = () => ({
+  sent_at: { $gte: new Date(Date.now() - VENTANA_DIAS * 24 * 60 * 60 * 1000) },
+});
+
+// ---------------------------------------------------------------------
 // persistNotification(payload)
 // ---------------------------------------------------------------------
 // Guarda una notificación en MongoDB. Se llama DESPUÉS de que
@@ -89,6 +106,9 @@ const getMyNotifications = async (userId, schoolId, { unreadOnly = false, limit 
   const filter = {
     user_id: userId,
     school: schoolId,
+    // Ventana de 30 días (ver VENTANA_DIAS): lo más viejo no se
+    // lista aunque siga existiendo en BD hasta el TTL de 90 días.
+    ...ventanaReciente(),
   };
   if (unreadOnly) {
     filter.read_at = null;
@@ -110,6 +130,10 @@ const getUnreadCount = async (userId, schoolId) => {
     user_id: userId,
     school: schoolId,
     read_at: null,
+    // Misma ventana de 30 días que la lista (VENTANA_DIAS): el badge
+    // no cuenta no leídas más viejas que la ventana — sin esto el
+    // badge se quedaba pegado con acumulación de meses.
+    ...ventanaReciente(),
   });
 };
 
