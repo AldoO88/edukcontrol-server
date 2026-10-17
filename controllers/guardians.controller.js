@@ -2369,7 +2369,10 @@ const getMyDashboard = async (req, res, next) => {
     // Guardar en cache (best-effort: si Redis no está, el response sale igual)
     await cache.set(cacheKey, responseBody, DASHBOARD_TTL);
     res.setHeader("X-Cache", "MISS");
-    console.log("Datos del body",responseBody);
+    // Nota (fix 2026-10-17): aquí había un `console.log("Datos del body",
+    // responseBody)` que volcaba PII de menores (nombres de estudiantes +
+    // stats) a los logs de Render en CADA request; se quitó por el mismo
+    // criterio que el debug de login — logs sin datos sensibles.
     return res.status(200).json(responseBody);
   } catch (error) {
     next(error);

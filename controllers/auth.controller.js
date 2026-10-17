@@ -315,18 +315,14 @@ const signupController = async (req, res, next) => {
 // Login universal: SOLO phoneNumber + password (sin importar el rol).
 const loginController = async (req, res, next) => {
   try {
-    // Logging diagnóstico: ayuda a debuggear problemas donde el body
-    // llega vacío (ej. falta Content-Type, FormData mal enviado, etc.)
-    console.log("[login] === DEBUG ===");
-    console.log("[login] Content-Type:", req.headers["content-type"]);
-    console.log("[login] Raw body:", JSON.stringify(req.body));
-    console.log("[login] Body keys:", Object.keys(req.body || {}));
-
-    const { phone, phoneNumber: phoneNumberRaw, password } = req.body || {}; //
+    const { phone, phoneNumber: phoneNumberRaw, password } = req.body || {};
     const phoneNumber = phoneNumberRaw || phone;
 
-
-
+    // Log operativo del intento de login. REGLA (fix 2026-10-17): estos
+    // logs NUNCA incluyen el password ni el body crudo — antes existía un
+    // bloque de debug que imprimía `JSON.stringify(req.body)` (password en
+    // CLARTEXT a los logs de Render) y metadata del hash; se quitó junto
+    // con `console.log("Datos del body")` de guardians.
     console.log("[login] Attempting login for phoneNumber:", phoneNumber);
 
     if (!phoneNumber || !/^\d{10}$/.test(phoneNumber)) {
@@ -342,16 +338,13 @@ const loginController = async (req, res, next) => {
       .select("+password")
       .populate("school", "name cct logoUrl isActive");
 
-    
-
-    // Diagnóstico: ayuda a identificar si el password está hasheado,
-    // si el usuario existe, si tiene password, etc.
+    // Traza operativa del resultado de la búsqueda (sin metadata del
+    // hash). Útil en Render para distinguir "usuario inexistente" de
+    // "password incorrecto" en los 401.
     if (!foundUser) {
       console.log(`[login] User NOT found for phoneNumber: ${phoneNumber}`);
     } else {
       console.log(`[login] User found: _id=${foundUser._id} role=${foundUser.role} isActive=${foundUser.isActive}`);
-      console.log(`[login] Password field: ${foundUser.password ? "set (" + foundUser.password.length + " chars)" : "EMPTY/NULL"}`);
-      console.log(`[login] Password looks like bcrypt hash: ${foundUser.password && foundUser.password.startsWith("$2") ? "YES" : "NO (raw text?)"}`);
     }
 
     const isPasswordCorrect = foundUser
