@@ -488,9 +488,151 @@ const getDailyHistoryController = async (req, res, next) => {
   }
 };
 
+// GET /api/attendance/day-detail
+// ---------------------------------------------------------------------
+// Detalle de asistencia de UN día — un renglón por alumno activo. Lo
+// consume la pantalla de monitoreo web al hacer click en un renglón del
+// historial diario: trae foto (photoUrl Cloudinary), nombre, # control,
+// grupo, hora de entrada, hora de salida y estatus por alumno.
+//
+// Query params:
+//   school=<oid>   OBLIGATORIO para super_admin (tenantFilter lo exige
+//                  vía ?school=, igual que daily-history).
+//   date=YYYY-MM-DD  Día calendario UTC (misma convención documentada
+//                  en utils/school-time.js: taps reales 13:00-20:30Z y
+//                  ausencias del cron 07:30Z caen en el mismo día).
+//
+// Lógica (merge en JS — máximo ~500 alumnos, trivial):
+//   1. Logs del día (entry + exit) ordenados por event_time: el primer
+//      entry por alumno gana (el tap real; los absent del cron TAMBIÉN
+//      son event_type entry, con hora wall-clock del cutoff) y el
+//      primer exit idem.
+//   2. Alumnos activos de la escuela (MISMA matrícula que
+//      daily-history y los dashboards: school + status active) con el
+//      grupo poblado.
+//   3. Merge: estatus desde el log de entrada (on_time → present,
+//      late → late, absent → absent + flag justified). Sin log de
+//      entrada → "no_record": NO se miente con "falta" en días donde
+//      el cron no corrió (fin de semana, paro, etc.).
+//
+// Respuesta: { date, summary: { present, late, absent, no_record },
+//              students: [{ student, group, entry_time, exit_time,
+//                           status, justified }] }.
+// Orden: faltas primero, luego grupo y apellido — en monitoreo lo
+// interesante está arriba.
+const getDayDetailController = async (req, res, next) => {
+  try {
+    const tenant = tenantFilter(req);
+    if (!tenant.school) {
+      return res.status(400).json({
+        message: "school query param is required (super_admin must scope with ?school=).",
+      });
+    }
+
+    const { date } = req.query;
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(String(date))) {
+      return res.status(400).json({ message: "date is required and must be YYYY-MM-DD." });
+    }
+
+    // Rango UTC del día: [00:00Z, +1d 00:00Z).
+    const dayUtc = new Date(`${date}T00:00:00.000Z`);
+    if (Number.isNaN(dayUtc.getTime())) {
+      return res.status(400).json({ message: "date must be YYYY-MM-DD." });
+    }
+    const nextDayUtc = new Date(dayUtc);
+    nextDayUtc.setUTCDate(nextDayUtc.getUTCDate() + 1);
+
+    const [logs, students] = await Promise.all([
+      // Logs del día: entry (tap real o marcación del cron) + exit.
+      // sort event_time asc → el primero de cada tipo por alumno gana.
+      AttendanceLog.find({
+        school: tenant.school,
+        event_type: { $in: ["entry", "exit"] },
+        event_time: { $gte: dayUtc, $lt: nextDayUtc },
+      })
+        .sort({ event_time: 1 })
+        .lean(),
+      // Matrícula activa — MISMA query que daily-history / dashboards
+      // móviles para que los números concuerden en todas las pantallas.
+      Student.find({ ...tenant, status: "active" })
+        .select("controlNumber first_name last_name photoUrl current_group_id")
+        .populate("current_group_id", "grade section type")
+        .lean(),
+    ]);
+
+    // Mapas por alumno: primer entry y primer exit del día.
+    const entryByStudent = new Map();
+    const exitByStudent = new Map();
+    for (const log of logs) {
+      const sid = String(log.student_id);
+      if (log.event_type === "entry") {
+        if (!entryByStudent.has(sid)) entryByStudent.set(sid, log);
+      } else if (!exitByStudent.has(sid)) {
+        exitByStudent.set(sid, log);
+      }
+    }
+
+    // Merge: un renglón por alumno activo.
+    const studentsRows = students.map((s) => {
+      const entry = entryByStudent.get(String(s._id)) || null;
+      const exit = exitByStudent.get(String(s._id)) || null;
+
+      let status = "no_record";
+      let justified = false;
+      if (entry) {
+        if (entry.status === "on_time") status = "present";
+        else if (entry.status === "late") status = "late";
+        else if (entry.status === "absent") {
+          status = "absent";
+          justified = Boolean(entry.justified);
+        }
+      }
+
+      const g = s.current_group_id; // poblado (grade, section, type) o null
+      return {
+        student: {
+          id: String(s._id),
+          controlNumber: s.controlNumber || null,
+          first_name: s.first_name,
+          last_name: s.last_name,
+          photoUrl: s.photoUrl || null,
+        },
+        group: g ? { id: String(g._id), label: `${g.grade}° ${g.section}`, type: g.type } : null,
+        // entry_time solo si hubo TAP (un absent del cron no es hora
+        // de entrada — su event_time es el cutoff wall-clock).
+        entry_time: entry && entry.status !== "absent" ? entry.event_time : null,
+        exit_time: exit ? exit.event_time : null,
+        status,
+        justified,
+      };
+    });
+
+    // Orden: faltas primero, luego grupo (grado/sección) y apellido.
+    const STATUS_ORDER = { absent: 0, late: 1, present: 2, no_record: 3 };
+    studentsRows.sort((a, b) => {
+      const byStatus = STATUS_ORDER[a.status] - STATUS_ORDER[b.status];
+      if (byStatus !== 0) return byStatus;
+      const ag = a.group ? a.group.label : "zz";
+      const bg = b.group ? b.group.label : "zz";
+      if (ag !== bg) return ag < bg ? -1 : 1; // "1° A" < "3° C" (grados 1-3)
+      const al = `${a.student.last_name} ${a.student.first_name}`.toLowerCase();
+      const bl = `${b.student.last_name} ${b.student.first_name}`.toLowerCase();
+      return al < bl ? -1 : al > bl ? 1 : 0;
+    });
+
+    const summary = { present: 0, late: 0, absent: 0, no_record: 0 };
+    for (const r of studentsRows) summary[r.status] += 1;
+
+    res.status(200).json({ date, summary, students: studentsRows });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   deviceTriggerController,
   getAttendanceLogsController,
   getDailyHistoryController,
+  getDayDetailController,
   manualOverrideController,
 };

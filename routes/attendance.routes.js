@@ -7,6 +7,7 @@ const {
   deviceTriggerController,
   getAttendanceLogsController,
   getDailyHistoryController,
+  getDayDetailController,
   manualOverrideController,
 } = require("../controllers/attendance.controller");
 const {
@@ -60,6 +61,17 @@ router.get(
   isAuthenticated,
   authorize("admin", "principal", "registrar", "super_admin"),
   getDailyHistoryController
+);
+
+// GET /api/attendance/day-detail
+// Detalle de UN día — un renglón por alumno activo (foto, nombre,
+// grupo, entrada, salida, estatus). Auth: mismos roles admin-like que
+// daily-history; la web lo llama al hacer click en un renglón.
+router.get(
+  "/day-detail",
+  isAuthenticated,
+  authorize("admin", "principal", "registrar", "super_admin"),
+  getDayDetailController
 );
 
 // POST /api/attendance/mark-absences
