@@ -394,9 +394,12 @@ const manualOverrideController = async (req, res, next) => {
 //   school_year_id      Opcional: si viene y falta `from`, el rango
 //                       arranca en el startDate del ciclo (hasta hoy).
 //
-// Respuesta: { from, to, days: [{ date, on_time, late, absent,
-//              present, total }] } — present = on_time + late;
-// total = present + absent. Orden date desc.
+// Respuesta: { from, to, totalStudents, days: [{ date, on_time, late,
+//              absent, present, total }] } — present = on_time + late;
+// total = present + absent. Orden date desc. totalStudents = matrícula
+// activa (MISMA query que los dashboards móviles: school + status
+// active) — la web calcula el % como present/totalStudents para que el
+// número responda "¿cuántos de los matriculados vinieron?".
 const getDailyHistoryController = async (req, res, next) => {
   try {
     const tenant = tenantFilter(req);
@@ -438,7 +441,8 @@ const getDailyHistoryController = async (req, res, next) => {
       return res.status(400).json({ message: "Range too large (max 366 days)." });
     }
 
-    const days = await AttendanceLog.aggregate([
+    const [days, totalStudents] = await Promise.all([
+      AttendanceLog.aggregate([
       {
         $match: {
           school: tenant.school,
@@ -471,9 +475,14 @@ const getDailyHistoryController = async (req, res, next) => {
         },
       },
       { $sort: { date: -1 } },
+      ]),
+      // Matrícula activa — MISMA query que los dashboards móviles
+      // (prefect/director/social-worker: school + status active) para
+      // que el % de la web concuerde con el "Alumnos" de la app.
+      Student.countDocuments({ ...tenant, status: "active" }),
     ]);
 
-    res.status(200).json({ from: fromStr, to: toStr, days });
+    res.status(200).json({ from: fromStr, to: toStr, totalStudents, days });
   } catch (error) {
     next(error);
   }
