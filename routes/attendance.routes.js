@@ -6,6 +6,7 @@ const rateLimit = require("express-rate-limit");
 const {
   deviceTriggerController,
   getAttendanceLogsController,
+  getDailyHistoryController,
   manualOverrideController,
 } = require("../controllers/attendance.controller");
 const {
@@ -39,12 +40,26 @@ router.post(
 );
 
 // GET /api/attendance/logs
-// Consulta del historial. Auth: JWT + cualquier rol del personal.
+// Consulta del historial. Auth: JWT + cualquier rol del personal
+// (+ super_admin desde 2026-10-17: la web de monitoreo de asistencia
+// hace drill-down por día contra este endpoint con ?school=).
 router.get(
   "/logs",
   isAuthenticated,
-  authorize("admin", "principal", "registrar", "teacher", "prefect", "social_worker"),
+  authorize("admin", "principal", "registrar", "teacher", "prefect", "social_worker", "super_admin"),
   getAttendanceLogsController
+);
+
+// GET /api/attendance/daily-history
+// Historial AGREGADO por día (presentes/retardos/faltas) para el
+// monitoreo web. Auth: JWT + roles admin-like + super_admin (la web
+// navega como super_admin con ?school=; el admin de escuela sale del
+// JWT). Ver comentario completo en el controller.
+router.get(
+  "/daily-history",
+  isAuthenticated,
+  authorize("admin", "principal", "registrar", "super_admin"),
+  getDailyHistoryController
 );
 
 // POST /api/attendance/mark-absences

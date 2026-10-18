@@ -6,11 +6,15 @@
 const mongoose = require("mongoose");
 const Student = require("../models/Student.model");
 const AttendanceLog = require("../models/AttendanceLog.model");
+const SchoolYear = require("../models/SchoolYear.model");
 const attendanceService = require("../services/attendance.service");
 const notificationService = require("../services/notification.service");
-
-const tenantFilter = (req) =>
-  req.payload.role === "super_admin" ? {} : { school: req.payload.schoolId };
+// tenantFilter centralizado (utils/school-scope.js): devuelve
+// { school: ObjectId } (casteado — el aggregation pipeline NO castea
+// strings, bug prod 2026-10-16) y soporta ?school=<oid> para que el
+// super_admin de la web acote a una escuela. Reemplaza al local que
+// ignoraba el param (super_admin consultaba TODAS las escuelas).
+const { tenantFilter } = require("../utils/school-scope");
 
 // Mapea el device_type que manda el lector al verificationMode del log.
 // Los lectores faciales propios se identifican con "face"/"facial"/"camera";
@@ -366,8 +370,118 @@ const manualOverrideController = async (req, res, next) => {
   }
 };
 
+// GET /api/attendance/daily-history
+// ---------------------------------------------------------------------
+// Historial de asistencia AGREGADO por día calendario (UTC) para el
+// monitoreo del panel web (super_admin / admin de escuela). Un renglón
+// por día con alumnos ÚNICOS por status (mismo criterio que
+// utils/school-day-attendance.js — un alumno edge con 2 docs cuenta 1
+// vez por status, no se sobre-cuenta).
+//
+// Convención de día (utils/school-time.js): se agrupa por la fecha
+// UTC de event_time. Ese día calendario cubre las DOS convenciones de
+// almacenamiento del backend: taps reales (instante UTC, 07:00-14:30
+// CST → 13:00-20:30Z) y ausencias del cron (wall-clock forzado a UTC,
+// cutoff 07:30 → 07:30Z del mismo día).
+//
+// Query params:
+//   school=<oid>        OBLIGATORIO para super_admin (tenantFilter lo
+//                       exige vía ?school=, igual que el resto de
+//                       endpoints tenant-scoped). El admin de escuela
+//                       sale del JWT.
+//   from, to            Rango calendario YYYY-MM-DD (UTC). Default:
+//                       últimos 30 días (to = hoy). Máx 366 días.
+//   school_year_id      Opcional: si viene y falta `from`, el rango
+//                       arranca en el startDate del ciclo (hasta hoy).
+//
+// Respuesta: { from, to, days: [{ date, on_time, late, absent,
+//              present, total }] } — present = on_time + late;
+// total = present + absent. Orden date desc.
+const getDailyHistoryController = async (req, res, next) => {
+  try {
+    const tenant = tenantFilter(req);
+    if (!tenant.school) {
+      return res.status(400).json({
+        message: "school query param is required (super_admin must scope with ?school=).",
+      });
+    }
+
+    const { from, to, school_year_id } = req.query;
+
+    // 'to' default = hoy; 'from' default = hoy − 29 días, ampliable al
+    // inicio del ciclo si se pasa school_year_id sin from.
+    const today = new Date();
+    const toStr = to || today.toISOString().slice(0, 10);
+    let fromStr = from;
+    if (!fromStr && school_year_id && mongoose.Types.ObjectId.isValid(String(school_year_id))) {
+      const year = await SchoolYear.findById(String(school_year_id)).select("startDate").lean();
+      if (year?.startDate) {
+        fromStr = new Date(year.startDate).toISOString().slice(0, 10);
+      }
+    }
+    if (!fromStr) {
+      fromStr = new Date(today.getTime() - 29 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    }
+
+    // Rango UTC [from 00:00Z, to+1d 00:00Z) — el to es inclusivo en
+    // día calendario, hence +1 día exclusivo.
+    const fromUtc = new Date(`${fromStr}T00:00:00.000Z`);
+    const toUtcExclusive = new Date(`${toStr}T00:00:00.000Z`);
+    toUtcExclusive.setUTCDate(toUtcExclusive.getUTCDate() + 1);
+    if (Number.isNaN(fromUtc.getTime()) || Number.isNaN(toUtcExclusive.getTime())) {
+      return res.status(400).json({ message: "from/to must be YYYY-MM-DD." });
+    }
+    if (toUtcExclusive <= fromUtc) {
+      return res.status(400).json({ message: "from must be <= to." });
+    }
+    if (toUtcExclusive - fromUtc > 367 * 24 * 60 * 60 * 1000) {
+      return res.status(400).json({ message: "Range too large (max 366 days)." });
+    }
+
+    const days = await AttendanceLog.aggregate([
+      {
+        $match: {
+          school: tenant.school,
+          event_type: "entry",
+          status: { $in: ["on_time", "late", "absent"] },
+          event_time: { $gte: fromUtc, $lt: toUtcExclusive },
+        },
+      },
+      // Alumnos únicos por (día, status): primero colapsa (día, status,
+      // alumno) y luego cuenta, así un doc doble edge no sobre-cuenta.
+      { $group: { _id: { date: { $dateToString: { format: "%Y-%m-%d", date: "$event_time" } }, status: "$status", student: "$student_id" } } },
+      { $group: { _id: { date: "$_id.date", status: "$_id.status" }, n: { $sum: 1 } } },
+      {
+        $group: {
+          _id: "$_id.date",
+          on_time: { $sum: { $cond: [{ $eq: ["$_id.status", "on_time"] }, "$n", 0] } },
+          late: { $sum: { $cond: [{ $eq: ["$_id.status", "late"] }, "$n", 0] } },
+          absent: { $sum: { $cond: [{ $eq: ["$_id.status", "absent"] }, "$n", 0] } },
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          date: "$_id",
+          on_time: 1,
+          late: 1,
+          absent: 1,
+          present: { $add: ["$on_time", "$late"] },
+          total: { $add: ["$on_time", "$late", "$absent"] },
+        },
+      },
+      { $sort: { date: -1 } },
+    ]);
+
+    res.status(200).json({ from: fromStr, to: toStr, days });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   deviceTriggerController,
   getAttendanceLogsController,
+  getDailyHistoryController,
   manualOverrideController,
 };
