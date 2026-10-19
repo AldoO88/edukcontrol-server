@@ -508,6 +508,50 @@ const processAttendanceEvent = async ({
     effectiveEventTime = now;
   }
 
+  // 1.5) Día no lectivo: si el calendario escolar marca el día como
+  //    festivo/vacación/suspensión/no lectivo (SchoolCalendar type ≠
+  //    special_schedule), el tap se IGNORA por completo — sin log, sin
+  //    notificación push, sin invalidación de cache. Rationale: los
+  //    lectores biométricos pueden seguir registrando pases de personas
+  //    en un día no lectivo (eventos, limpieza, vigilancia) y esos
+  //    pases no deben ensuciar el historial de asistencia (bug
+  //    2026-10-17: 9 taps de sábado quedaron como "presentes").
+  //    `special_schedule` NO bloquea: ese día SÍ es lectivo (horario
+  //    modificado — el cutoff del paso computeEntryStatus ya usa
+  //    special_entry_time). Silencioso TOTAL: ni tutor ni alumno reciben
+  //    aviso (decisión de producto 2026-10-18); el device-trigger
+  //    responde 200 { ignored: true } y la terminal su ACK normal.
+  //    NOTA: es un filtro "solo hacia adelante" — marcar un día PASADO
+  //    como no lectivo no borra los logs ya creados (cleanup manual).
+  const localDay = toLocalDate(effectiveEventTime);
+  const group = student.current_group_id
+    ? await Group.findById(student.current_group_id)
+        .select("school school_year_id")
+        .lean()
+    : null;
+  // isSchoolDay consulta SchoolCalendar (school + school_year_id + date
+  // + is_active). Con school_year_id undefined (alumno sin grupo) el
+  // mongoose descarta el campo y matchea cualquier ciclo — fallback
+  // razonable: cualquier entrada no lectiva de la fecha bloquea.
+  const dayCheck = await isSchoolDay(
+    student.school,
+    group?.school_year_id,
+    localDay
+  );
+  if (!dayCheck.isSchoolDay) {
+    console.log(
+      `[attendance] tap ignorada: día no lectivo (${dayCheck.reason}) — student ${student._id}, device ${device}, localDay ${localDay.toISOString().slice(0, 10)}`
+    );
+    return {
+      log: null,
+      eventType: null,
+      duplicate: false,
+      wasAbsenceOverride: false,
+      skipped: "non_school_day",
+      skipReason: dayCheck.reason,
+    };
+  }
+
   // 2) Duplicados cross-device: ¿el alumno tocó en ANY dispositivo dentro de
   //    la ventana (por defecto 5 min) alrededor de este evento? Si sí y no es
   //    un absent del cron → duplicado, se reutiliza el log sin notificar.
@@ -547,7 +591,7 @@ const processAttendanceEvent = async ({
   //    ausente todo el día. resolveLateArrival es incondicional aquí — si
   //    existe el absent de hoy, el alumno acaba de pasar el lector y ya está
   //    presente (documentado en AGENTS.md, sección late-arrival override).
-  const localDay = toLocalDate(effectiveEventTime);
+  //    (localDay ya se computó en el paso 1.5 — filtro de día no lectivo.)
   const endOfDay = new Date(localDay.getTime() + 24 * 60 * 60 * 1000);
   const existingAbsent = await AttendanceLog.findOne({
     student_id: student._id,

@@ -130,7 +130,7 @@ const deviceTriggerController = async (req, res, next) => {
 
     // La creación del log, la invalidación de cache y la notificación en
     // segundo plano viven en el servicio (compartido con el push ADMS).
-    const { log, eventType, duplicate } =
+    const { log, eventType, duplicate, skipped, skipReason } =
       await attendanceService.registerAttendanceEvent({
         student,
         eventTime: eventTimeDate,
@@ -138,6 +138,16 @@ const deviceTriggerController = async (req, res, next) => {
         verificationMode: resolveVerificationMode(device_type),
         snapshotUrl: snapshot_url || null,
       });
+
+    // Día no lectivo (SchoolCalendar): el tap se ignoró por completo —
+    // sin log ni push. La terminal recibe su ACK normal (200).
+    if (skipped) {
+      return res.status(200).json({
+        ignored: true,
+        reason: skipped,
+        detail: skipReason || null,
+      });
+    }
 
     res.status(duplicate ? 200 : 201).json({
       log,
