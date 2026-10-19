@@ -66,11 +66,17 @@ router.get(
 // GET /api/attendance/day-detail
 // Detalle de UN día — un renglón por alumno activo (foto, nombre,
 // grupo, entrada, salida, estatus). Auth: mismos roles admin-like que
-// daily-history; la web lo llama al hacer click en un renglón.
+// daily-history + super_admin; la web lo llama al hacer click en un
+// renglón. Desde 2026-10-19 también "prefect": el drill-down
+// "Asistencia de hoy" del dashboard del prefecto en la web
+// (/prefect/today-attendance) consume este mismo endpoint. El tenant
+// sale del JWT (tenantFilter) — el prefecto NUNCA puede pedir otra
+// escuela, así que añadirlo no rompe el aislamiento multi-tenant ni
+// altera la respuesta que ya reciben los roles existentes.
 router.get(
   "/day-detail",
   isAuthenticated,
-  authorize("admin", "principal", "registrar", "super_admin"),
+  authorize("admin", "principal", "registrar", "prefect", "super_admin"),
   getDayDetailController
 );
 
