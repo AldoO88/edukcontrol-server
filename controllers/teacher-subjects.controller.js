@@ -693,9 +693,13 @@ const saveAttendance = async (req, res, next) => {
       }
     }
 
-    // 5. Preparar fecha (solo día, sin hora)
-    const attendanceDate = new Date(date);
-    attendanceDate.setHours(0, 0, 0, 0);
+    // 5. Preparar fecha (solo día, sin hora) — medianoche UTC vía
+    //    parseDateOnly (ver helper: setHours LOCAL corría el día con
+    //    servidores en TZ ≠ UTC).
+    const attendanceDate = parseDateOnly(date);
+    if (!attendanceDate) {
+      return res.status(400).json({ message: "date must be a YYYY-MM-DD string." });
+    }
 
     // 6. Calcular resumen
     const summary = {
@@ -1676,12 +1680,31 @@ const getAttendanceSessions = async (req, res, next) => {
   }
 };
 
-// Helper: formatear fecha a "DD/MM/YYYY"
+// Helper: interpreta un string "YYYY-MM-DD" como medianoche UTC.
+// CONTRATO CON EL MÓVIL: el cliente compara `date.split("T")[0]` con su
+// fecha LOCAL, así que el backend debe almacenar EXACTAMENTE el día que
+// el cliente envió. `new Date("YYYY-MM-DD")` ya es medianoche UTC; el
+// bug original hacía `setHours(0,0,0,0)` (medianoche LOCAL del
+// servidor), y con servidor en TZ ≠ UTC (p. ej. backend local en México,
+// UTC-6) "2026-10-21" se guardaba como 2026-10-20T06:00:00Z: el móvil
+// veía la sesión "ayer", no hidrataba la lista ya tomada y la matriz la
+// mostraba en la columna equivocada. En Render (UTC) no se notaba.
+function parseDateOnly(date) {
+  if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return null;
+  }
+  const parsed = new Date(`${date}T00:00:00.000Z`);
+  return isNaN(parsed.getTime()) ? null : parsed;
+}
+
+// Helper: formatear fecha a "DD/MM/YYYY". Usa getters UTC porque el
+// almacenamiento es medianoche UTC: con getters locales en un servidor
+// TZ ≠ UTC el día se mostraba corrido (31/12 en realidad era 01/01…).
 function formatDate(date) {
   const d = new Date(date);
-  const day = String(d.getDate()).padStart(2, "0");
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const year = d.getFullYear();
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  const month = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const year = d.getUTCFullYear();
   return `${day}/${month}/${year}`;
 }
 
@@ -1720,9 +1743,13 @@ const createAttendanceSession = async (req, res, next) => {
       return res.status(403).json({ message: "You are not assigned to teach this subject in this group." });
     }
 
-    // 2. Normalizar fecha a midnight
-    const attendanceDate = new Date(date);
-    attendanceDate.setHours(0, 0, 0, 0);
+    // 2. Normalizar fecha a medianoche UTC (ver parseDateOnly: con
+    //    setHours LOCAL el día se guardaba corrido en TZ ≠ UTC y la
+    //    app no encontraba la sesión al reabrir "Tomar Asistencia").
+    const attendanceDate = parseDateOnly(date);
+    if (!attendanceDate) {
+      return res.status(400).json({ message: "date must be a YYYY-MM-DD string." });
+    }
 
     // 3. Verificar si ya existe sesión para esta fecha
     const existing = await ClassAttendance.findOne({
