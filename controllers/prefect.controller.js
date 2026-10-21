@@ -504,7 +504,9 @@ const getTeacherScheduleById = async (req, res, next) => {
 // Devuelve todos los grupos con estadísticas pre-computadas:
 //   - studentCount, maleCount, femaleCount (desde Student)
 //   - conductReportCount, demeritCount, meritCount (desde ConductLog)
-//   - attendedToday, attendanceRate (desde AttendanceLog, solo hoy)
+//   - attendedToday, attendanceRate (desde AttendanceLog, solo hoy y
+//     solo status on_time/late — ver paso 4: los logs "absent" que
+//     crea el cron de cutoff NO cuentan como asistencia)
 // =====================================================================
 const getGroupsSummary = async (req, res, next) => {
   try {
@@ -591,7 +593,15 @@ const getGroupsSummary = async (req, res, next) => {
       });
     }
 
-    // 4. Agregación de asistencia de hoy por grupo (alumnos únicos con entry)
+    // 4. Agregación de asistencia de hoy por grupo (alumnos únicos con
+    //    entry PRESENTE). status in (on_time, late) es OBLIGATORIO: el
+    //    cron de cutoff (registerAbsence en attendance.service.js) crea
+    //    logs con event_type "entry" y status "absent" para los que no
+    //    pasaron por el lector — sin este filtro, una vez que corre el
+    //    cron TODOS los alumnos tienen log de entrada y TODOS los
+    //    grupos marcaban 100% aunque hubiera faltas reales (bug
+    //    reportado 2026-10-20). Misma convención que el detalle de
+    //    asistencia y los dashboards: presente = on_time + late.
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const tomorrow = new Date(today);
@@ -603,6 +613,7 @@ const getGroupsSummary = async (req, res, next) => {
           school: new mongoose.Types.ObjectId(schoolId),
           event_type: "entry",
           event_time: { $gte: today, $lt: tomorrow },
+          status: { $in: ["on_time", "late"] },
         },
       },
       {

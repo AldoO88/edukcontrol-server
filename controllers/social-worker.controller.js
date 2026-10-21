@@ -450,12 +450,19 @@ const getGroupsSummary = async (req, res, next) => {
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
+    // Asistencia de hoy por grupo — SOLO entradas presentes: el cron
+    // de cutoff crea logs event_type "entry" con status "absent" para
+    // los que no pasaron por el lector; sin este filtro TODOS los
+    // grupos marcaban 100% (mismo fix que prefect.getGroupsSummary,
+    // bug reportado 2026-10-20). Presente = on_time + late, igual que
+    // el detalle de asistencia y los dashboards.
     const attendanceAgg = await AttendanceLog.aggregate([
       {
         $match: {
           school: new mongoose.Types.ObjectId(schoolId),
           event_type: "entry",
           event_time: { $gte: today, $lt: tomorrow },
+          status: { $in: ["on_time", "late"] },
         },
       },
       {
