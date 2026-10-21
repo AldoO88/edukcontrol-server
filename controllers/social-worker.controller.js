@@ -374,6 +374,10 @@ const getGroupsSummary = async (req, res, next) => {
       type: "regular",
     })
       .select("grade section shift school_year_id")
+      // Orden académico: 1A, 1B, 1C, 1D, 2A, 2B… (grade numérico +
+      // section alfabético) — mismo criterio que
+      // prefect.getGroupsSummary.
+      .sort({ grade: 1, section: 1 })
       .lean();
 
     if (groups.length === 0) {

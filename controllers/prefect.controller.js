@@ -520,6 +520,11 @@ const getGroupsSummary = async (req, res, next) => {
       type: "regular",
     })
       .select("grade section shift school_year_id")
+      // Orden académico: 1A, 1B, 1C, 1D, 2A, 2B… — grade es numérico
+      // (el $sort es numérico, no lexicográfico: 2 < 10) y section
+      // alfabético ("A" < "B"). Sin esto el orden era el de inserción
+      // en Mongo (pedido del usuario, 2026-10-20).
+      .sort({ grade: 1, section: 1 })
       .lean();
 
     if (groups.length === 0) {
