@@ -16,6 +16,9 @@ const Guardian = require("../models/Guardian.model");
 const whatsappService = require("../services/whatsapp.service");
 const { generateOtp } = require("../utils/otp");
 const refreshTokenService = require("../services/refresh-token.service");
+// Verificación criptográfica del identityToken de Sign in with Apple
+// (JWKS de Apple vía jose). Ver services/appleAuth.service.js.
+const appleAuthService = require("../services/appleAuth.service");
 
 // TTL del access JWT. 15 min es el rango OWASP para apps con refresh.
 const ACCESS_TTL = "15m";
@@ -401,6 +404,170 @@ const loginController = async (req, res, next) => {
       client,
       remember,
     });
+
+    res.status(200).json({
+      user: buildAuthResponse(foundUser),
+      authToken,
+      refreshToken: refresh.raw,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// POST /auth/apple
+// Login con Sign in with Apple — la opción de login equivalente que
+// exige la Guideline 4.8 del App Store Review. Contexto: la app usa
+// WhatsApp/Twilio (tercero) para crear y verificar cuentas (OTP de
+// activación y recuperación), y Apple exige ofrecer además un login de
+// terceros que cumpla sus 3 condiciones de privacidad; Apple indica
+// que Sign in with Apple las cumple todas.
+//
+// IMPORTANTE — no cambia el modelo de altas: las cuentas las siguen
+// dando de alta los administradores (phoneNumber). Este endpoint es
+// SOLO otra vía de ENTRAR: si el correo del Apple ID no coincide con
+// una cuenta provisionada, se responde con error claro (decidido con
+// el product owner: sin auto-alta ni vínculo automático).
+//
+// Flujo:
+//   1. El cliente (app iOS) envía el `identityToken` (JWT de Apple) +
+//      el mismo `remember`/`client` que el login normal.
+//   2. Se verifica RS256 contra JWKS de Apple (iss/aud/exp) — 401 si
+//      falla cualquier cosa.
+//   3. Lookup: primero por `apple_sub` (cuenta ya ligada); si no, por
+//      `email` (lazy-link: guarda el `sub` en el primer contacto).
+//   4. Gates idénticos a /auth/login (isActive, escuela activa).
+//   5. Respuesta con el MISMO shape que /auth/login (user + authToken
+//      + refreshToken + cookie HttpOnly) para que AuthContext de la
+//      app lo consuma sin cambios.
+//
+// NOTA sobre idioma: los mensajes de error de este endpoint van en
+// ESPAÑOL pese a la convención inglesa del resto del backend, porque
+// el mobile los pinta EN CRUDO en un Alert (ver `errorMessage` de
+// src/services/authService.js). Son UI, no log.
+const appleLoginController = async (req, res, next) => {
+  try {
+    const { identityToken, remember, client } = req.body || {};
+
+    if (!identityToken || typeof identityToken !== "string") {
+      return res.status(400).json({ message: "identityToken is required." });
+    }
+
+    // Verificación criptográfica (firma RS256 + iss + aud + exp).
+    // Cualquier fallo → 401 genérico en español, sin detalles: no
+    // filtramos si falló por firma, audience o expiración.
+    let claims;
+    try {
+      claims = await appleAuthService.verifyIdentityToken(identityToken);
+    } catch (err) {
+      console.log("[apple-login] identityToken inválido:", err.message);
+      return res.status(401).json({
+        message:
+          "No se pudo validar el inicio de sesión con Apple. Inténtalo de nuevo.",
+      });
+    }
+
+    console.log(
+      `[apple-login] Token OK: sub=${claims.sub} email=${claims.email || "(sin correo)"} relay=${claims.isPrivateEmail}`
+    );
+
+    // --- Lookup 1: cuenta ya ligada a este Apple ID (el camino normal
+    // a partir del segundo login) ---
+    let foundUser = await User.findOne({ apple_sub: claims.sub })
+      .populate("school", "name cct logoUrl isActive");
+
+    // --- Lookup 2: por correo (lazy-link en el primer contacto) ---
+    // Aplica tanto al correo real como al relay de Apple: ambos son
+    // estables por app y solo se entregan con consentimiento del
+    // usuario (que puede elegir "ocultar mi correo" → relay).
+    if (!foundUser && claims.email) {
+      const matches = await User.find({ email: claims.email }).populate(
+        "school",
+        "name cct logoUrl isActive"
+      );
+
+      // El índice único de email es POR ESCUELA (uniq_school_email),
+      // así que el mismo correo puede existir en >1 institución: no
+      // podemos saber cuál es el usuario → lo mandamos al login
+      // tradicional donde sí identifica con teléfono.
+      if (matches.length > 1) {
+        console.log(
+          `[apple-login] Email ambiguo (${matches.length} cuentas): ${claims.email}`
+        );
+        return res.status(409).json({
+          message:
+            "Tu correo está vinculado a más de una institución. Inicia sesión con tu teléfono y contraseña.",
+        });
+      }
+
+      if (matches.length === 1) {
+        foundUser = matches[0];
+        // Liga el sub de Apple de forma permanente. `updateOne` en vez
+        // de `save()`: no pasa por el pre-save hook (no toca bcrypt ni
+        // timestamps) y evita el race de lectura del doc completo.
+        // Si pierde un race (otro request ligó primero), el índice
+        // único rechaza el dup y el próximo login va por `apple_sub`.
+        try {
+          await User.updateOne(
+            { _id: foundUser._id },
+            { $set: { apple_sub: claims.sub } }
+          );
+        } catch (linkErr) {
+          console.warn(
+            "[apple-login] No se pudo guardar apple_sub:",
+            linkErr.message
+          );
+        }
+      }
+    }
+
+    // Modelo de producto cerrado: sin cuenta dada de alta por el
+    // admin → error claro y que use el login de siempre. (Decisión
+    // del product owner, 2026-10-21.)
+    if (!foundUser) {
+      return res.status(403).json({
+        message:
+          "Tu institución no tiene una cuenta con este correo de Apple. Inicia sesión con tu teléfono y contraseña, o contacta a tu escuela.",
+      });
+    }
+
+    // Mismos gates que /auth/login. isActive=false = baja dada de baja
+    // por el admin.
+    if (foundUser.isActive === false) {
+      return res.status(403).json({
+        message: "Tu cuenta está desactivada. Contacta a tu institución.",
+      });
+    }
+
+    if (
+      foundUser.role !== "super_admin" &&
+      foundUser.school &&
+      foundUser.school.isActive === false
+    ) {
+      return res
+        .status(403)
+        .json({ message: "Tu institución está inactiva. Contacta a soporte." });
+    }
+
+    // Access JWT + cookie HttpOnly, idéntico a /auth/login (mismo
+    // shape de respuesta) y refresh token con la misma lógica remember/client.
+    const authToken = signAccessToken(foundUser);
+    setAuthCookie(res, authToken, ACCESS_TTL_MS);
+
+    const rememberFlag =
+      remember !== undefined ? !!remember : client === "web" ? true : false;
+    const clientName = client === "app" ? "app" : "web";
+
+    const refresh = await refreshTokenService.issueRefreshToken({
+      user: foundUser,
+      school: foundUser.school,
+      client: clientName,
+      remember: rememberFlag,
+    });
+
+    console.log(
+      `[apple-login] OK user=${foundUser._id} role=${foundUser.role} remember=${rememberFlag}`
+    );
 
     res.status(200).json({
       user: buildAuthResponse(foundUser),
@@ -1191,6 +1358,7 @@ const resetPassword = async (req, res, next) => {
 module.exports = {
   signupController,
   loginController,
+  appleLoginController,
   logoutController,
   requestActivationController,
   verifyOtpController,

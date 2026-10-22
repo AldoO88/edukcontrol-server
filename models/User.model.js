@@ -56,6 +56,22 @@ const userSchema = new Schema(
         "Please provide a valid email address.",
       ],
     },
+    // Sign in with Apple (Guideline 4.8 App Store): `sub` estable de
+    // Apple = identificador único de este usuario+app. Se guarda en el
+    // PRIMER login con Apple cuando el correo del Apple ID coincide
+    // con una cuenta ya provisionada por la escuela; los logins
+    // siguientes buscan primero por este campo (más confiable que el
+    // correo, que Apple solo lo entrega la primera vez). Sparse
+    // (partialFilterExpression en los índices): solo existe en cuentas
+    // que ligaron su Apple ID. select:false: no viaja en los queries
+    // normales (es un identificador de autenticación; el match de
+    // `User.findOne({ apple_sub })` sigue funcionando, select sólo
+    // afecta la proyección del documento devuelto).
+    apple_sub: {
+      type: String,
+      trim: true,
+      select: false,
+    },
     // 10-digit cell phone number (MX format, no country code).
     // Universal login identifier and OTP contact method.
     // Required for ALL roles.
@@ -220,6 +236,18 @@ userSchema.index(
     unique: true,
     name: "uniq_school_phone",
     partialFilterExpression: { phoneNumber: { $type: "string" } },
+  }
+);
+// Unique apple_sub (Sign in with Apple): una cuenta Apple NO puede
+// ligarse a 2 usuarios distintos. Mismo estilo partialFilterExpression
+// que los índices de arriba: solo aplica a docs que traen el campo
+// (las cuentas sin ligar no compiten por la unicidad).
+userSchema.index(
+  { apple_sub: 1 },
+  {
+    unique: true,
+    name: "uniq_apple_sub",
+    partialFilterExpression: { apple_sub: { $type: "string" } },
   }
 );
 userSchema.index({ role: 1, isActive: 1 });

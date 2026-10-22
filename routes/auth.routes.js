@@ -5,6 +5,7 @@ const rateLimit = require("express-rate-limit");
 const {
   signupController,
   loginController,
+  appleLoginController,
   logoutController,
   requestActivationController,
   verifyOtpController,
@@ -35,11 +36,32 @@ const otpRequestLimiter = rateLimit({
   },
 });
 
+// Rate limiter para login con Sign in with Apple (Guideline 4.8).
+// 20/h por IP: cada intento puede forzar un fetch del JWKS de Apple
+// (aunque jose cachea), así que limitamos abuso. Es más permisivo que
+// el de OTP porque un hogar/red NAT puede tener varios intentos
+// legítimos de familiares con cuentas distintas.
+const appleLoginLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hora
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    message: "Too many sign-in attempts. Please try again later.",
+  },
+});
+
 // POST /auth/signup — crear usuario (staff o tutor pre-registrado)
 router.post("/signup", signupController);
 
 // POST /auth/login — login universal: phoneNumber + password (todos los roles)
 router.post("/login", loginController);
+
+// POST /auth/apple — login con Sign in with Apple (Guideline 4.8:
+// opción de login de terceros equivalente al OTP de WhatsApp).
+// Verifica el identityToken contra JWKS de Apple y entra con la cuenta
+// provisionada cuyo correo coincida (rate-limited).
+router.post("/apple", appleLoginLimiter, appleLoginController);
 
 // POST /auth/logout — limpia la cookie HttpOnly
 router.post("/logout", logoutController);
