@@ -14,6 +14,7 @@ const School = require("../models/School.model");
 const Student = require("../models/Student.model");
 const Guardian = require("../models/Guardian.model");
 const whatsappService = require("../services/whatsapp.service");
+const otpDeliveryService = require("../services/otp-delivery.service");
 const { generateOtp } = require("../utils/otp");
 const refreshTokenService = require("../services/refresh-token.service");
 // Verificación criptográfica del identityToken de Sign in with Apple
@@ -601,7 +602,9 @@ const logoutController = async (req, res, next) => {
 // POST /auth/request-activation
 // Cualquier usuario pre-registrado SIN password y que NO sea
 // super_admin/admin (esos fijan password en /signup) puede solicitar un
-// OTP por WhatsApp para activar su cuenta y establecer contraseña.
+// OTP para activar su cuenta y establecer contraseña.
+// Entrega: SMS SIEMPRE (canal nativo, corrige Guideline 4.2.3(i)) +
+// WhatsApp solo con consentimiento (ver services/otp-delivery.service.js).
 // Aplica a: tutor, principal, registrar, teacher, prefect, social_worker.
 //
 // isActive=false bloquea este flujo (cuenta dada de baja por el admin:
@@ -657,32 +660,30 @@ const requestActivationController = async (req, res, next) => {
         .json({ message: "Account is already active. Please log in." });
     }
 
-    // Opt-in check: la escuela debe capturar el consentimiento, o el
-    // usuario puede consentir en este mismo request pasando
-    // `whatsapp_opt_in: true` en el body. Es el equivalente a marcar
-    // el checkbox en el formulario de activación — el acto de pedir un
-    // código por WhatsApp siendo acompañado de la afirmación explícita
-    // ES consentimiento para recibir OTPs por ese canal.
-    if (!user.notification_prefs?.whatsapp?.opted_in) {
-      if (whatsapp_opt_in === true) {
-        user.notification_prefs = {
-          ...(user.notification_prefs?.toObject?.() ||
-            user.notification_prefs ||
-            {}),
-          whatsapp: {
-            opted_in: true,
-            opted_in_at: new Date(),
-            source: "activation_request",
-          },
-        };
-        // Se persiste junto con otpCode/otpExpiresAt en el save() de abajo.
-      } else {
-        return res.status(451).json({
-          message:
-            "We need your consent to send you WhatsApp messages. Please ask your school to enable WhatsApp notifications for your account, or include { whatsapp_opt_in: true } in your request to consent at this moment.",
-          consent_required: true,
-        });
-      }
+    // Consentimiento WhatsApp — OPCIONAL desde la corrección 4.2.3(i)
+    // (App Store, 2026-10-27): el OTP se envía SIEMPRE por SMS, que es
+    // un canal nativo del sistema y NO exige instalar WhatsApp ni otra
+    // app. El consentimiento solo decide si se AÑADE el envío por
+    // WhatsApp como canal adicional: sin él se omite ese envío, ya NO se
+    // bloquea el flujo con 451 (antes era un dead-end para usuarios sin
+    // opt-in y forzaba instalar WhatsApp para recibir el código).
+    // La escuela captura el consentimiento al pre-registrar, o el
+    // usuario puede darlo en este request con `whatsapp_opt_in: true`
+    // (source="activation_request" para auditoría).
+    const alreadyConsented = !!user.notification_prefs?.whatsapp?.opted_in;
+
+    if (whatsapp_opt_in === true && !alreadyConsented) {
+      user.notification_prefs = {
+        ...(user.notification_prefs?.toObject?.() ||
+          user.notification_prefs ||
+          {}),
+        whatsapp: {
+          opted_in: true,
+          opted_in_at: new Date(),
+          source: "activation_request",
+        },
+      };
+      // Se persiste junto con otpCode/otpExpiresAt en el save() de abajo.
     }
 
     const otp = generateOtp();
@@ -692,46 +693,35 @@ const requestActivationController = async (req, res, next) => {
     user.otpExpiresAt = expiresAt;
     await user.save();
 
-    // Enviar OTP por WhatsApp (Twilio Authentication template).
-    await whatsappService.sendOtpViaWhatsApp(phoneNumber, otp, "activation");
+    // Entrega del código: SMS siempre + WhatsApp solo con consentimiento.
+    await otpDeliveryService.deliverOtp({
+      phone: phoneNumber,
+      code: otp,
+      purpose: "activation",
+      sendWhatsApp: alreadyConsented || whatsapp_opt_in === true,
+    });
 
     res.status(200).json({
       message: "Activation code sent to your phone.",
       expiresAt,
     });
   } catch (error) {
-    // Errores de Twilio: mapear a HTTP status apropiado.
-    if (error instanceof whatsappService.ConsentRequiredError) {
-      return res.status(451).json({
-        message:
-          "Recipient has not opted in to WhatsApp messages from EdukControl.",
-        consent_required: true,
-      });
-    }
-    if (error instanceof whatsappService.TemplateNotApprovedError) {
-      console.error(
-        "[requestActivationController] WhatsApp template not approved. Check TWILIO_OTP_TEMPLATE_ID in .env."
-      );
-      return res.status(503).json({
-        message:
-          "OTP service temporarily unavailable. Please contact your school.",
-      });
-    }
-    if (error instanceof whatsappService.TemplateNotFoundError) {
-      console.error(
-        "[requestActivationController] Twilio 21655: Content SID not found. " +
-          "TWILIO_OTP_TEMPLATE_ID no existe en esta cuenta Twilio " +
-          "(revisar SID, cuenta/subcuenta y espacios en el env var)."
-      );
-      return res.status(503).json({
-        message:
-          "OTP service temporarily unavailable. Please contact your school.",
-      });
-    }
+    // Errores de entrega: SMS es el canal principal; WhatsApp es
+    // best-effort y su fallo NUNCA llega hasta aquí (lo traga
+    // otp-delivery.service.js si el SMS salió).
     if (error instanceof whatsappService.InvalidPhoneError) {
       return res.status(400).json({
+        message: "The registered phone number is not valid.",
+      });
+    }
+    if (error instanceof whatsappService.TwilioError) {
+      // Config faltante (TWILIO_SMS_FROM / creds) o error de la API.
+      console.error(
+        `[requestActivation] OTP delivery failed: ${error.code} ${error.message}`
+      );
+      return res.status(503).json({
         message:
-          "The registered phone number is not valid for WhatsApp delivery.",
+          "OTP service temporarily unavailable. Please contact your school.",
       });
     }
     next(error);
@@ -1132,13 +1122,14 @@ const changePasswordController = async (req, res, next) => {
 
 // POST /auth/forgot-password/request
 // Body: { phone: string }
-// Genera un OTP, lo hashea, lo guarda con expiración de 10 minutos,
-// y envía un WhatsApp con el código vía Twilio Authentication template.
-// NO devuelve el código al cliente (solo confirmación de envío).
+// Genera un OTP, lo guarda con expiración de 10 minutos, y lo envía
+// por SMS SIEMPRE (canal nativo, corrige Guideline 4.2.3(i)) más por
+// WhatsApp si la cuenta tiene consentimiento. NO devuelve el código al
+// cliente (solo confirmación de envío).
 //
-// Aplica a cualquier rol (tutor, teacher, admin, etc.) que tenga
-// opted_in a WhatsApp. Si opted_in=false, retorna 451 para que el
-// front pida al usuario activar el canal desde su perfil.
+// Aplica a cualquier rol sin importar su opt-in de WhatsApp: el SMS no
+// requiere consentimiento (es transaccional) y el 451 se eliminó porque
+// era un dead-end que exigía instalar WhatsApp para recibir el código.
 const requestPasswordReset = async (req, res, next) => {
   try {
     const { phoneNumber: phoneNumberRaw, phone } = req.body || {};
@@ -1170,14 +1161,12 @@ const requestPasswordReset = async (req, res, next) => {
       });
     }
 
-    // Opt-in check (mismo gate que activación, pero para todos los roles).
-    if (!user.notification_prefs?.whatsapp?.opted_in) {
-      return res.status(451).json({
-        message:
-          "We need your consent to send you WhatsApp messages. Please enable WhatsApp notifications in your profile.",
-        consent_required: true,
-      });
-    }
+    // Consentimiento WhatsApp — OPCIONAL desde la corrección 4.2.3(i):
+    // el OTP se envía SIEMPRE por SMS (canal nativo, sin instalar apps).
+    // El consentimiento solo añade el envío por WhatsApp; sin él se omite
+    // ese canal y el flujo continúa — ya NO se responde 451 (antes era
+    // un dead-end que forzaba tener WhatsApp instalado).
+    const sendWhatsApp = !!user.notification_prefs?.whatsapp?.opted_in;
 
     const otp = generateOtp();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
@@ -1186,49 +1175,33 @@ const requestPasswordReset = async (req, res, next) => {
     user.otpExpiresAt = expiresAt;
     await user.save();
 
-    // Enviar OTP por WhatsApp (Twilio Authentication template).
-    await whatsappService.sendOtpViaWhatsApp(
-      phoneNumber,
-      otp,
-      "password_reset"
-    );
+    // Entrega del código: SMS siempre + WhatsApp solo con consentimiento.
+    await otpDeliveryService.deliverOtp({
+      phone: phoneNumber,
+      code: otp,
+      purpose: "password_reset",
+      sendWhatsApp,
+    });
 
     res.status(200).json({
       message: "Password reset code sent to your phone.",
       expiresAt,
     });
   } catch (error) {
-    if (error instanceof whatsappService.ConsentRequiredError) {
-      return res.status(451).json({
-        message:
-          "Recipient has not opted in to WhatsApp messages from EdukControl.",
-        consent_required: true,
-      });
-    }
-    if (error instanceof whatsappService.TemplateNotApprovedError) {
-      console.error(
-        "[requestPasswordReset] WhatsApp template not approved. Check TWILIO_OTP_TEMPLATE_ID in .env."
-      );
-      return res.status(503).json({
-        message:
-          "OTP service temporarily unavailable. Please try again later.",
-      });
-    }
-    if (error instanceof whatsappService.TemplateNotFoundError) {
-      console.error(
-        "[requestPasswordReset] Twilio 21655: Content SID not found. " +
-          "TWILIO_OTP_TEMPLATE_ID no existe en esta cuenta Twilio " +
-          "(revisar SID, cuenta/subcuenta y espacios en el env var)."
-      );
-      return res.status(503).json({
-        message:
-          "OTP service temporarily unavailable. Please try again later.",
-      });
-    }
+    // Mismo mapeo que request-activation: SMS es el canal principal,
+    // WhatsApp es best-effort (sus errores no llegan hasta aquí).
     if (error instanceof whatsappService.InvalidPhoneError) {
       return res.status(400).json({
+        message: "The registered phone number is not valid.",
+      });
+    }
+    if (error instanceof whatsappService.TwilioError) {
+      console.error(
+        `[requestPasswordReset] OTP delivery failed: ${error.code} ${error.message}`
+      );
+      return res.status(503).json({
         message:
-          "The registered phone number is not valid for WhatsApp delivery.",
+          "OTP service temporarily unavailable. Please try again later.",
       });
     }
     next(error);

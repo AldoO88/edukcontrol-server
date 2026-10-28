@@ -561,10 +561,9 @@ DRY_RUN=0 MONGO_URI=… node scripts/backfill-guardian-active.js   # aplica
 
 Flipa a `true` los guardians con `isActive: false` O sin el campo (los 422 preexistentes). Idempotente.
 
-## WhatsApp OTP (Twilio Business API)
+## OTP por WhatsApp/SMS (Twilio)
 
-**Proveedor:** Twilio. **Canal único:** WhatsApp (sin fallback SMS).
-**Tipo de template:** Authentication (OTP).
+**Proveedor:** Twilio. **Canales:** SMS **siempre** (canal principal, nativo del sistema — corrige App Store Guideline 4.2.3(i), que rechazaba exigir instalar WhatsApp para recibir el código) + WhatsApp **solo con consentimiento** del usuario (canal adicional, best-effort). Orquestación en `services/otp-delivery.service.js`; envío SMS en `services/sms.service.js`; WhatsApp (template Authentication de Meta) en `services/whatsapp.service.js`.
 
 ### Variables de entorno requeridas
 
@@ -572,6 +571,7 @@ Ver `.env.example` para el detalle. Las claves son:
 
 - `TWILIO_ACCOUNT_SID`
 - `TWILIO_AUTH_TOKEN`
+- `TWILIO_SMS_FROM` (remitente con capacidad SMS; en prod: `+525629162116`)
 - `TWILIO_WHATSAPP_FROM` (en sandbox: `+14155238886`)
 - `TWILIO_OTP_TEMPLATE_ID` (Content SID `HXxxxxx`, post-aprobación de Meta)
 - `TWILIO_STATUS_CALLBACK_URL` (URL pública del webhook)
@@ -585,7 +585,7 @@ Todo usuario que reciba OTPs vía WhatsApp debe tener `notification_prefs.whatsa
 - `PUT /auth/me/notification-preferences` — body `{ whatsapp_opted_in: true }` (source = `self_profile`)
 - `PUT /api/guardians/:guardianId` — body `whatsapp_opt_in: true` (source = `admin_form`)
 
-Los endpoints OTP (`/auth/request-activation`, `/auth/forgot-password/request`) retornan **`451 Unavailable For Legal Reasons`** con `{ consent_required: true }` si `opted_in === false`.
+Los endpoints OTP (`/auth/request-activation`, `/auth/forgot-password/request`) **ya NO retornan `451`** por falta de opt-in (se eliminó el 2026-10-27: era un dead-end que forzaba instalar WhatsApp). El SMS sale siempre; sin opt-in solo se omite el envío por WhatsApp. El manejo de `451`/`consent_required` en los services de la app se conserva por compatibilidad, pero no debería dispararse.
 
 ### Webhook de status
 
