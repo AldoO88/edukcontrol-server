@@ -565,6 +565,8 @@ Flipa a `true` los guardians con `isActive: false` O sin el campo (los 422 preex
 
 **Proveedor:** Twilio. **Canales:** SMS **siempre** (canal principal, nativo del sistema — corrige App Store Guideline 4.2.3(i), que rechazaba exigir instalar WhatsApp para recibir el código) + WhatsApp **solo con consentimiento** del usuario (canal adicional, best-effort). Orquestación en `services/otp-delivery.service.js`; envío SMS en `services/sms.service.js`; WhatsApp (template Authentication de Meta) en `services/whatsapp.service.js`.
 
+**Selector en la app:** los endpoints OTP aceptan `delivery_channel: 'sms' | 'whatsapp'` (radio de la pantalla de activación/forgot-password). `'sms'` = solo SMS; `'whatsapp'` = SMS (respaldo) + WhatsApp — elegirlo ES consentimiento explícito y se persiste en `notification_prefs.whatsapp` con source `activation_request` / `password_reset_request`. Ausente = legacy (SMS + WhatsApp si hay opt-in).
+
 ### Variables de entorno requeridas
 
 Ver `.env.example` para el detalle. Las claves son:

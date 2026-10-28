@@ -611,17 +611,22 @@ const logoutController = async (req, res, next) => {
 // no se gasta OTP en ella). isActive=true con password ya seteado
 // también bloquea (ya está activa, debe hacer login).
 //
-// Body: { phoneNumber, whatsapp_opt_in?: boolean }
+// Body: { phoneNumber, whatsapp_opt_in?: boolean,
+//         delivery_channel?: 'sms' | 'whatsapp' }
 // Si opted_in=false, el cliente PUEDE pasar whatsapp_opt_in=true en el
 // mismo request para consentir en el momento. Útil cuando el usuario
 // (o el admin en su nombre) descubre que la escuela no marcó el opt-in
 // al pre-registrarlo. Se graba source="activation_request" para auditoría.
+// `delivery_channel` refleja el selector de la pantalla de activación
+// (radio SMS/WhatsApp): 'sms' = solo SMS; 'whatsapp' = SMS + WhatsApp
+// (y equivale a dar consentimiento); ausente = legacy por opt-in.
 const requestActivationController = async (req, res, next) => {
   try {
     const {
       phoneNumber: phoneNumberRaw,
       phone,
       whatsapp_opt_in,
+      delivery_channel,
     } = req.body || {};
     const phoneNumber = phoneNumberRaw || phone;
 
@@ -670,9 +675,18 @@ const requestActivationController = async (req, res, next) => {
     // La escuela captura el consentimiento al pre-registrar, o el
     // usuario puede darlo en este request con `whatsapp_opt_in: true`
     // (source="activation_request" para auditoría).
+    // Elección de canal desde la app (selector SMS/WhatsApp en la
+    // pantalla de activación) — `delivery_channel`:
+    //   'sms'      → SOLO SMS (aunque la cuenta tenga consent WhatsApp:
+    //                el usuario pidió ese canal de forma explícita).
+    //   'whatsapp' → además del SMS base va WhatsApp; elegirlo ES
+    //                consentimiento explícito y se persiste abajo.
+    //   (ausente)  → legacy: SMS siempre + WhatsApp si ya hay opt-in.
+    const consentRequested =
+      whatsapp_opt_in === true || delivery_channel === "whatsapp";
     const alreadyConsented = !!user.notification_prefs?.whatsapp?.opted_in;
 
-    if (whatsapp_opt_in === true && !alreadyConsented) {
+    if (consentRequested && !alreadyConsented) {
       user.notification_prefs = {
         ...(user.notification_prefs?.toObject?.() ||
           user.notification_prefs ||
@@ -686,6 +700,10 @@ const requestActivationController = async (req, res, next) => {
       // Se persiste junto con otpCode/otpExpiresAt en el save() de abajo.
     }
 
+    // Canal efectivo (radio exclusivo elegido por el usuario).
+    let sendWhatsApp = alreadyConsented || consentRequested;
+    if (delivery_channel === "sms") sendWhatsApp = false;
+
     const otp = generateOtp();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
@@ -693,12 +711,12 @@ const requestActivationController = async (req, res, next) => {
     user.otpExpiresAt = expiresAt;
     await user.save();
 
-    // Entrega del código: SMS siempre + WhatsApp solo con consentimiento.
+    // Entrega del código: SMS siempre + WhatsApp según elección/consent.
     await otpDeliveryService.deliverOtp({
       phone: phoneNumber,
       code: otp,
       purpose: "activation",
-      sendWhatsApp: alreadyConsented || whatsapp_opt_in === true,
+      sendWhatsApp,
     });
 
     res.status(200).json({
@@ -1121,18 +1139,24 @@ const changePasswordController = async (req, res, next) => {
 // =====================================================================
 
 // POST /auth/forgot-password/request
-// Body: { phone: string }
+// Body: { phone: string, delivery_channel?: 'sms' | 'whatsapp' }
 // Genera un OTP, lo guarda con expiración de 10 minutos, y lo envía
 // por SMS SIEMPRE (canal nativo, corrige Guideline 4.2.3(i)) más por
-// WhatsApp si la cuenta tiene consentimiento. NO devuelve el código al
-// cliente (solo confirmación de envío).
+// WhatsApp si la cuenta tiene consentimiento o si `delivery_channel`
+// es 'whatsapp' (el selector de la pantalla; elegirlo ES consentimiento
+// y se persiste con source="password_reset_request"). `delivery_channel`
+// 'sms' = solo SMS. NO devuelve el código al cliente (solo confirmación).
 //
 // Aplica a cualquier rol sin importar su opt-in de WhatsApp: el SMS no
 // requiere consentimiento (es transaccional) y el 451 se eliminó porque
 // era un dead-end que exigía instalar WhatsApp para recibir el código.
 const requestPasswordReset = async (req, res, next) => {
   try {
-    const { phoneNumber: phoneNumberRaw, phone } = req.body || {};
+    const {
+      phoneNumber: phoneNumberRaw,
+      phone,
+      delivery_channel,
+    } = req.body || {};
     const phoneNumber = phoneNumberRaw || phone;
 
     if (!phoneNumber || !/^\d{10}$/.test(phoneNumber)) {
@@ -1162,11 +1186,31 @@ const requestPasswordReset = async (req, res, next) => {
     }
 
     // Consentimiento WhatsApp — OPCIONAL desde la corrección 4.2.3(i):
-    // el OTP se envía SIEMPRE por SMS (canal nativo, sin instalar apps).
-    // El consentimiento solo añade el envío por WhatsApp; sin él se omite
-    // ese canal y el flujo continúa — ya NO se responde 451 (antes era
-    // un dead-end que forzaba tener WhatsApp instalado).
-    const sendWhatsApp = !!user.notification_prefs?.whatsapp?.opted_in;
+    // el OTP se envía SIEMPRE por SMS (canal nativo, sin instalar apps)
+    // y ya NO se responde 451 (antes era un dead-end que forzaba tener
+    // WhatsApp instalado). Selector de canal de la app (`delivery_channel`):
+    //   'sms'      → SOLO SMS (radio elegido por el usuario).
+    //   'whatsapp' → además del SMS base va WhatsApp; elegirlo ES
+    //                consentimiento explícito y se persiste abajo.
+    //   (ausente)  → legacy: SMS siempre + WhatsApp si hay opt-in.
+    const alreadyConsented = !!user.notification_prefs?.whatsapp?.opted_in;
+
+    if (delivery_channel === "whatsapp" && !alreadyConsented) {
+      user.notification_prefs = {
+        ...(user.notification_prefs?.toObject?.() ||
+          user.notification_prefs ||
+          {}),
+        whatsapp: {
+          opted_in: true,
+          opted_in_at: new Date(),
+          source: "password_reset_request",
+        },
+      };
+      // Se persiste junto con otpCode/otpExpiresAt en el save() de abajo.
+    }
+
+    let sendWhatsApp = alreadyConsented || delivery_channel === "whatsapp";
+    if (delivery_channel === "sms") sendWhatsApp = false;
 
     const otp = generateOtp();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
