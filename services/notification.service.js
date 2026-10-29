@@ -260,7 +260,13 @@ const sendAttendanceNotification = async (student, attendanceLog) => {
     ? student.school.cct || String(student.school._id || student.school)
     : "no-school";
 
-  const fullName = `${student.first_name} ${student.last_name}`.trim();
+  // Nombre defensivo (patrón de sendMissingExitNotification): si el doc
+  // viene de un select sin nombres, usar controlNumber y NUNCA dejar
+  // que salga "undefined" en el push.
+  const fullName =
+    `${student.first_name || ""} ${student.last_name || ""}`.trim() ||
+    student.controlNumber ||
+    "Alumno";
   const eventTypeLabel =
     attendanceLog.event_type === "entry" ? "ENTRADA" : "SALIDA";
   // Los taps se guardan como instante UTC REAL (la terminal manda offset
@@ -313,7 +319,13 @@ const sendAbsenceNotification = async (student, attendanceLog) => {
     return { dispatched: 0, reason: "no_guardians" };
   }
 
-  const fullName = `${student.first_name} ${student.last_name}`.trim();
+  // Nombre defensivo (patrón de sendMissingExitNotification): si el doc
+  // viene de un select sin nombres, usar controlNumber y NUNCA dejar
+  // que salga "undefined" en el push.
+  const fullName =
+    `${student.first_name || ""} ${student.last_name || ""}`.trim() ||
+    student.controlNumber ||
+    "Alumno";
   // OJO: este event_time viene del CRON (`markAbsencesForSchool`) y guarda
   // la hora PARED del cutoff forzada a UTC (`setUTCHours(07:30)` → 07:30Z),
   // NO un instante real → usar el formatter wall-clock SIN offset. Con

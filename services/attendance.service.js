@@ -778,7 +778,7 @@ const markAbsencesForSchool = async (schoolId, schoolYearId, targetDate, targetS
       current_group_id: { $in: groupIds },
       status: "active",
     })
-      .select("_id school current_group_id")
+      .select("_id school current_group_id first_name last_name controlNumber")
       .lean();
 
     let shiftMarked = 0;
@@ -930,7 +930,7 @@ const runExitCheckForSchool = async (schoolId, schoolYearId, targetDate, targetS
       current_group_id: { $in: groupIds },
       status: "active",
     })
-      .select("_id school current_group_id")
+      .select("_id school current_group_id first_name last_name controlNumber")
       .lean();
 
     let shiftFlagged = 0;
