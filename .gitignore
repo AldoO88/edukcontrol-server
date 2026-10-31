@@ -13,3 +13,7 @@ credentials.md_backup-*
 
 # Backups de scripts destructivos
 scripts/_backups/
+
+# Artefactos de herramientas locales (OpenCode)
+.agents/
+skills-lock.json

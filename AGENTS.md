@@ -494,6 +494,42 @@ Cosas que el schema **no** puede validar y tienen que vivir en el controller:
 
 Cualquier cambio en `Grade` o `ConductLog` invalida el cache del dashboard (TTL 5 min) de TODOS los tutores del estudiante afectado vía `services/dashboard-cache.service.js`.
 
+## Tenant de prueba (App Store / TestFlight review)
+
+Existe un tenant **separado y aislado** en la BD productiva de Atlas para que los revisores de Apple/Google y los testers prueben sin tocar los datos reales de la escuela:
+
+- **Escuela:** "Escuela de Prueba EdukControl" — `cct: 13TST0001A`, `_id: 6acbf37e6e366e9370dbd617`.
+- **Escuela real (NUNCA tocar en scripts de prueba):** "Escuela Secundaria Técnica No. 47" — `cct: 13DST0049E`.
+- Todos los docs del tenant de prueba filtran por `school = 6acbf37e6e366e9370dbd617`. Los scripts de seed/refresh **deben** abortar si el cct `13TST0001A` no existe en la BD (protección multi-tenant).
+
+### Credenciales demo (login: teléfono + password, sin OTP)
+
+| Rol | Teléfono | Contraseña |
+|-----|----------|------------|
+| Principal (admin) | `7710000001` | `EdukTest2026!` |
+| Maestro | `7710000002` | `EdukTest2026!` |
+| Tutor | `7710000003` | `EdukTest2026!` |
+| Prefecto | `7710000004` | `EdukTest2026!` |
+| Trabajo social | `7710000005` | `EdukTest2026!` |
+
+Verificado contra producción (`https://adukcontrol-server.onrender.com/auth/login`): los 5 logins devuelven `authToken` + rol correcto. Estas credenciales van en el campo **Notes** de App Review Information de App Store Connect y en la respuesta de Resolution Center.
+
+### Scripts
+
+- `scripts/seed-play-test-data.js` — crea el tenant completo (escuela, ciclo, alumnos, asignaciones, calificaciones, asistencia histórica, avisos). Idempotente.
+- `scripts/seed-play-test-refresh.js` — **refresca los datos "de hoy"** para que los dashboards se vean vivos el día de la grabación del video de revisión. Idempotente. Crea: `ClassSchedule` (horario Lun-Vie por asignación), `AttendanceLog` del día (presentes/retardo/faltas respetando las DOS convenciones de `utils/school-time.js`: taps = instante UTC real, ausencias del cron = wall-clock forzado a UTC), `ConductLog` (demérito + mérito) y `Citation` (pendiente + histórico) en los hijos del tutor demo.
+
+**Uso (siempre contra Atlas, no el Mongo local):**
+
+```sh
+cd eduk-control-backend
+MONGO_URI="$(grep '^MONGO_URI_ATLAS=' .env | cut -d= -f2-)" node scripts/seed-play-test-refresh.js
+```
+
+Re-ejecutar el **mismo día** de la grabación si ya pasó uno: asistencia/conducta/citatorios son "de hoy"; los horarios son estables. Las **salidas** (`event_type: "exit"`) solo se crean si la hora escolar ya pasó las 13:00 — si se corre de mañana, re-ejecutar en la tarde las agrega.
+
+> ⚠️ `.env` local tiene `MONGO_URI=mongodb://127.0.0.1:27017/eduk_control` (Mongo **local**, sin el tenant de prueba). El tenant vive en `MONGO_URI_ATLAS`. Siempre setear `MONGO_URI` explícitamente al valor de `MONGO_URI_ATLAS` al correr seeds de prueba.
+
 ## Guardians — identidad por teléfono y reuso entre hermanos
 
 La identidad del tutor es su **teléfono** dentro de la escuela: el índice único `{school, phone}` (`Guardian.model.js:105`) garantiza que existe a lo sumo un `Guardian` por `{school, phone}`. Esto permite que un mismo padre/madre quede vinculado a varios alumnos (hermanos) sin duplicar registros.
