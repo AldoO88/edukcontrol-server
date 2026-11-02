@@ -238,8 +238,29 @@ const getAllGuardians = async (req, res, next) => {
       Guardian.countDocuments(filter),
     ]);
 
+    // `password_set`: ¿el tutor YA fijó su contraseña (activó la
+    // cuenta vía OTP)? `password` tiene `select: false` en el modelo,
+    // así que se pide con `+password` en una query aparte y solo se
+    // deriva un booleano — el hash NUNCA viaja en esta respuesta.
+    // La web usa este campo para distinguir "Activa" (con password)
+    // de "Pendiente" (User creado, sin activar).
+    const userIds = items
+      .map((it) => (it.user_id ? it.user_id._id : null))
+      .filter(Boolean);
+    const usersWithPwd = userIds.length
+      ? await User.find({ _id: { $in: userIds } }).select("+password")
+      : [];
+    const activatedIds = new Set(
+      usersWithPwd.filter((u) => u.password).map((u) => String(u._id))
+    );
+
     res.status(200).json({
-      items,
+      items: items.map((it) => {
+        const obj = it.toObject();
+        const uid = obj.user_id ? obj.user_id._id || obj.user_id : null;
+        obj.password_set = uid ? activatedIds.has(String(uid)) : false;
+        return obj;
+      }),
       total,
       page: pageNum,
       limit: limitNum,
@@ -267,7 +288,11 @@ const getAllGuardians = async (req, res, next) => {
 //                          cycle_status "enrolled" en el ciclo activo
 //                          de la escuela
 //   sin_alumnos          — students[] vacío o ausente
-//   con_cuenta_activa    — su User.role=tutor existe y User.isActive=true
+//   con_cuenta_activa    — su User.role=tutor existe, isActive=true
+//                          Y ya tiene password (activó su cuenta vía
+//                          OTP). Antes solo miraba isActive, que nace
+//                          true en toda cuenta nueva → contaba como
+//                          "activas" a las que nunca activaron.
 //   alumnos_sin_tutor    — Student con school de la escuela cuyo _id
 //                          no aparece en ningún Guardian.students de
 //                          la escuela (incluye activos y desactivados)
@@ -328,7 +353,13 @@ const getGuardiansStats = async (req, res, next) => {
           },
         },
         { $unwind: "$user" },
-        { $match: { "user.isActive": true } },
+        // "Con cuenta activa" REAL = el tutor YA fijó su contraseña
+        // (hizo OTP y activó). `isActive` solo NO basta: nace `true`
+        // en toda cuenta nueva (ver AGENTS.md "Account state"), así
+        // que sin este corte el contador incluía tutores importados
+        // que nunca activaron. `$nin: [null, ""]` excluye password
+        // ausente (nunca seteado), null explícito o string vacío.
+        { $match: { "user.isActive": true, "user.password": { $nin: [null, ""] } } },
         { $count: "n" },
       ]),
       Guardian.distinct("students", {
