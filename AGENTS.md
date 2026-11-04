@@ -478,8 +478,12 @@ Cosas que el schema **no** puede validar y tienen que vivir en el controller:
 
 - **`kpis.attendance`** — `% de Asistencia`:
   - `percentage`: `(días con entry del alumno / días lectivos del ciclo hasta hoy) * 100`, redondeado a 2 decimales. `null` si no hay días lectivos.
+  - **Los días `status: "absent"` NO cuentan como asistidos** (fix 2026-11-04): las ausencias del cron también son `event_type: "entry"` y sin este filtro el KPI marcaba 100% (13/13) aunque hubiera faltas — incoherente con el historial del tutor, que ya trataba absent → FALTA. El match del aggregate lleva `status: { $ne: "absent" }`.
   - `attended_days`, `total_school_days`: números crudos para mostrar "9/10" en el front.
   - `source`: `"derived_from_attendance_logs"` por ahora. Cuando se cree un modelo `SchoolDay` (calendario explícito) se prefiere ese lookup.
+- **`last_event`** (por estudiante, no es KPI) — último `AttendanceLog` real del alumno para el card del dashboard:
+  - El aggregate **excluye `status: "absent"`** (fix 2026-11-04): los absent del cron (`device: auto@system`) tienen `event_time` "hora pared forzada a UTC" (07:45 → `07:45Z`) y al formatearlo como instante real la app mostraba **"Entrada: Ayer, 1:45 a.m."** (07:45Z − 6h); además su `event_type` es `"entry"`, así que el alumno de falta salía como "En el plantel".
+  - `is_currently_in_institution` = el último evento real es una **entrada DEL DÍA escolar** (`toSchoolDate` + clave `YYYY-MM-DD`): una entrada de ayer sin salida registrada no deja al alumno "dentro" hasta nuevo tap.
 - **`kpis.cumulative_gpa`** — `Promedio Acumulado` (regla de los 3 trimestres):
   - `null` si ningún trimestre tiene calificaciones.
   - Si solo T1 evaluado (9.0) → `9.0`.

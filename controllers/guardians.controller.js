@@ -35,6 +35,7 @@ const { tenantFilter } = require("../utils/school-scope");
 const {
   formatSchoolTime,
   formatWallClockDateTime,
+  toSchoolDate,
 } = require("../utils/school-time");
 
 const ADMIN_LIKE_ROLES = ["admin", "registrar", "super_admin"];
@@ -2014,9 +2015,37 @@ const getMyDashboard = async (req, res, next) => {
       // 3a. Último evento de asistencia por student — 1 query batch
       if (students.length > 0) {
         const studentIds = students.map((s) => s._id);
-        // Aggregation: para cada student, el evento más reciente
+
+        // Clave "YYYY-MM-DD" de un instante UTC real leído con el reloj
+        // de la escuela (toSchoolDate + getters getUTC*). Se usa para
+        // comparar "¿el último evento es de HOY?" sin depender del TZ
+        // del servidor (regla de utils/school-time.js).
+        const schoolDayKey = (instant) => {
+          const d = toSchoolDate(instant);
+          const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+          const dd = String(d.getUTCDate()).padStart(2, "0");
+          return `${d.getUTCFullYear()}-${mm}-${dd}`;
+        };
+        const todayKey = schoolDayKey(new Date());
+
+        // Aggregation: para cada student, el evento más reciente.
+        //
+        // FIX 2026-11-04 (bug "Entrada: Ayer, 1:45 a.m."): se excluyen
+        // los logs `status: "absent"` que crea el cron (`device:
+        // auto@system`). NO son entradas físicas y su `event_time` está
+        // guardado como "hora pared forzada a UTC" (cutoff 07:45 →
+        // `07:45Z`): al formatearlo como instante real la app restaba 6h
+        // y el tutor veía "Entrada: 1:45 a.m." para un alumno que ni
+        // siquiera llegó. Sin este filtro el absent también encabezaba
+        // el card y, como su `event_type` es "entry", el alumno salía
+        // como "En el plantel" estando dado de falta.
         const latestEvents = await AttendanceLog.aggregate([
-          { $match: { student_id: { $in: studentIds } } },
+          {
+            $match: {
+              student_id: { $in: studentIds },
+              status: { $ne: "absent" },
+            },
+          },
           { $sort: { event_time: -1 } },
           {
             $group: {
@@ -2029,15 +2058,21 @@ const getMyDashboard = async (req, res, next) => {
         ]);
         const eventByStudent = new Map();
         for (const ev of latestEvents) {
+          // is_currently_in_institution: "dentro del plantel AHORA
+          // MISMO" (semántica que asume el front). Solo es true si el
+          // último evento real es una entrada DE HOY: una entrada de
+          // ayer sin salida registrada (olvidó escanear al irse) no
+          // significa que el alumno esté ahorita dentro.
+          const isInstitutionToday =
+            ev.event_type === "entry" &&
+            schoolDayKey(ev.event_time) === todayKey;
           eventByStudent.set(String(ev._id), {
             event_type: ev.event_type,
             // Label legible para mostrar directo en el front sin transformar
             event_type_label: ev.event_type === "entry" ? "Entrada" : "Salida",
             event_time: ev.event_time,
             device: ev.device || null,
-            // is_currently_in_institution: derivado
-            // entry = "dentro", exit = "fuera"
-            is_currently_in_institution: ev.event_type === "entry",
+            is_currently_in_institution: isInstitutionToday,
           });
         }
         for (const s of students) {
@@ -2240,13 +2275,21 @@ const getMyDashboard = async (req, res, next) => {
         const tenantDaySet = new Set(tenantDaysAgg.map((d) => d._id));
 
         if (totalSchoolDays > 0) {
-          // Días con al menos 1 'entry' por estudiante (dentro del ciclo)
+          // Días con al menos 1 'entry' por estudiante (dentro del ciclo).
+          //
+          // FIX 2026-11-04: el match excluye `status: "absent"`. Las
+          // ausencias del cron TAMBIÉN son `event_type: "entry"`, así
+          // que sin este filtro contaban como "día asistido" y el KPI
+          // marcaba 100% (13/13) aunque el alumno hubiera faltado —
+          // incoherente con el historial del tutor, que ya trataba
+          // absent → FALTA.
           const studentEntryDaysAgg = await AttendanceLog.aggregate([
             {
               $match: {
                 school: schoolId,
                 student_id: { $in: studentIds },
                 event_type: "entry",
+                status: { $ne: "absent" },
                 event_time: dateRangeMatch,
               },
             },
