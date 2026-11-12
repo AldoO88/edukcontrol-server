@@ -50,6 +50,22 @@ const CHANNELS = {
 };
 
 // =====================================================================
+// maskToken(token)
+// =====================================================================
+// Enmascara un Expo Push Token para los logs de Render: conserva el
+// prefijo ("ExponentPushToken[…") y los últimos 4 caracteres. NUNCA
+// loguear el token completo: cualquiera con acceso a los logs podría
+// reenviar notificaciones a ese dispositivo con el token crudo.
+// =====================================================================
+const maskToken = (token) => {
+  if (typeof token !== "string" || token.trim().length === 0) {
+    return "(sin token)";
+  }
+  if (token.length <= 12) return "***";
+  return `${token.slice(0, 17)}…${token.slice(-4)}`;
+};
+
+// =====================================================================
 // sendToTokens(tokens, payload)
 // =====================================================================
 // Envía un push a una lista de Expo Push Tokens.
@@ -113,9 +129,30 @@ const sendToTokens = async (tokens, payload) => {
 
     let successCount = 0;
     let failureCount = 0;
-    tickets.forEach((ticket) => {
-      if (ticket.status === "ok") successCount++;
-      else failureCount++;
+    tickets.forEach((ticket, idx) => {
+      if (ticket.status === "ok") {
+        successCount++;
+        return;
+      }
+      failureCount++;
+      // Logueamos CADA ticket fallido. Antes solo se registraban los
+      // errores HTTP/red y DeviceNotRegistered: cualquier otro error de
+      // ticket — como InvalidCredentials por credenciales APNs ausentes
+      // en Expo (caso real del 2026-11-11, invisible en Render durante
+      // semanas) — se perdía en silencio y el dispatch aparecía como
+      // "unknown" sin pista alguna.
+      const masked = maskToken(tokens[idx]);
+      // Ojo: Expo ecoea el token crudo dentro de `message` en errores
+      // como DeviceNotRegistered — lo enmascaramos también ahí para no
+      // filtrar el token completo a los logs.
+      let safeMessage = ticket.message || "(sin mensaje)";
+      if (typeof tokens[idx] === "string" && tokens[idx].length > 0) {
+        safeMessage = safeMessage.split(tokens[idx]).join(masked);
+      }
+      console.warn(
+        `[expo-push] Ticket error for token ${masked}: ` +
+          `${ticket.details?.error || "unknown"} — ${safeMessage}`
+      );
     });
 
     return { successCount, failureCount, responses: tickets, tickets };
@@ -129,6 +166,31 @@ const sendToTokens = async (tokens, payload) => {
       networkError: error.message,
     };
   }
+};
+
+// =====================================================================
+// resolveSendFailureReason(result)
+// =====================================================================
+// Traduce el resultado de sendToTokens a un motivo legible para los
+// callers (`result.reason || "unknown"`). Antes de este fix los errores
+// de ticket no se propagaban: p.ej. InvalidCredentials por credenciales
+// APNs/FCM ausentes en Expo (caso real del 2026-11-11) era
+// indistinguible de un fallo de red y aparecía como "unknown" en Render.
+// Devuelve undefined cuando hubo al menos un ticket "ok" (no es fallo).
+// =====================================================================
+const resolveSendFailureReason = (result) => {
+  if (result.successCount > 0) return undefined;
+  if (result.httpError) return `http_${result.httpError}`;
+  if (result.networkError) return "network_error";
+  if (!Array.isArray(result.tickets) || result.tickets.length === 0) {
+    // HTTP 200 pero sin tickets dentro de `data` — respuesta inesperada.
+    return "empty_response";
+  }
+  const firstFailed = result.tickets.find((t) => t.status !== "ok");
+  return (
+    (firstFailed && (firstFailed.details?.error || firstFailed.message)) ||
+    "ticket_error"
+  );
 };
 
 // =====================================================================
@@ -229,12 +291,15 @@ const dispatchToGuardians = async (guardians, payload, logTag) => {
     );
   }
 
+  // Motivo real del fallo cuando NO se entregó nada (los callers lo
+  // imprimen como `result.reason || "unknown"`): ver resolveSendFailureReason.
   return {
     dispatched: result.successCount,
     failed: result.failureCount,
     tokens: tokens.length,
     invalidated,
     persisted: persistedUserIds.size,
+    reason: resolveSendFailureReason(result),
   };
 };
 
@@ -701,6 +766,9 @@ const sendToStaffUser = async (user, payload) => {
     dispatched: result.successCount,
     failed: result.failureCount,
     persisted: true,
+    // Motivo legible si nada se entregó (mismo criterio que la ruta de
+    // guardianes — los callers de staff también imprimen result.reason).
+    reason: resolveSendFailureReason(result),
   };
 };
 
@@ -908,4 +976,7 @@ module.exports = {
   // Constantes exportadas (por si los controllers o tests las necesitan)
   CHANNELS,
   EXPO_PUSH_URL,
+  // Exportado para smoke tests (mismo precedente que
+  // citations.controller#parseScheduledDate).
+  resolveSendFailureReason,
 };
