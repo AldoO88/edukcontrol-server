@@ -31,6 +31,11 @@ const {
   updateReferral,
 } = require("../controllers/social-worker-case.controller");
 
+const {
+  getExpedientes,
+  updateExpedienteStatus,
+} = require("../controllers/social-worker-expediente.controller");
+
 const router = Router();
 
 // Todas las rutas requieren JWT + role social_worker
@@ -59,6 +64,19 @@ router.get("/teacher-schedule/:teacherId", getTeacherSchedule);
 
 // GET /api/social-worker/school-absences — top alumnos con más faltas escolares
 router.get("/school-absences", getSchoolAbsences);
+
+// =====================================================================
+// EXPEDIENTES (sección web del trabajador social)
+// =====================================================================
+
+// GET /api/social-worker/expedientes — padrón del ciclo + estado de
+// expediente por alumno + summary global (barra de progreso).
+// Query: ?group_id= &status=pending|in_progress|completed &search=
+router.get("/expedientes", getExpedientes);
+
+// PATCH /api/social-worker/students/:studentId/expediente-status —
+// marcar "completed" o revertir a "in_progress" (manual).
+router.patch("/students/:studentId/expediente-status", updateExpedienteStatus);
 
 // =====================================================================
 // ACUERDOS CON PADRES

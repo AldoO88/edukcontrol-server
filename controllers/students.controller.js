@@ -1110,8 +1110,10 @@ const updateStudentHealth = async (req, res, next) => {
       student.health_inclusion = {};
     }
 
+    let touchedExpedienteData = false;
     for (const field of allowedFields) {
       if (updates[field] !== undefined) {
+        touchedExpedienteData = true;
         if (field === "medical_notes") {
           student.medical_notes = updates[field];
         } else if (field === "alerts") {
@@ -1131,6 +1133,17 @@ const updateStudentHealth = async (req, res, next) => {
       }
     }
 
+    // Progreso del expediente (sección web del trabajador social):
+    // cualquier guardado real bumpa la última fecha y, si todavía estaba
+    // "pending", lo pasa a "in_progress" automáticamente. "completed" lo
+    // decide el trabajador social a mano (nunca se toca aquí).
+    if (touchedExpedienteData) {
+      student.expediente_last_saved_at = new Date();
+      if (student.expediente_status === "pending") {
+        student.expediente_status = "in_progress";
+      }
+    }
+
     await student.save();
 
     res.status(200).json({
@@ -1140,6 +1153,8 @@ const updateStudentHealth = async (req, res, next) => {
         studentId: student._id,
         healthInclusion: student.health_inclusion,
         medicalNotes: student.medical_notes,
+        expedienteStatus: student.expediente_status,
+        expedienteLastSavedAt: student.expediente_last_saved_at,
       },
     });
   } catch (error) {

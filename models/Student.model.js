@@ -172,6 +172,33 @@ const studentSchema = new Schema(
       trim: true,
       default: null,
     },
+    // === Estado del EXPEDIENTE (trabajo social, sección web) ==========
+    // Progreso de captura del expediente del alumno. Lo lee
+    // GET /api/social-worker/expedientes (listado + barra de progreso)
+    // y lo escriben: PATCH /api/students/:id/health (auto pending →
+    // in_progress + bump de last_saved_at) y
+    // PATCH /api/social-worker/students/:id/expediente-status (completed
+    // / revertir a in_progress, a mano).
+    expediente_status: {
+      type: String,
+      enum: {
+        values: ["pending", "in_progress", "completed"],
+        message:
+          "expediente_status must be one of: pending, in_progress, completed.",
+      },
+      default: "pending",
+    },
+    // Última vez que el trabajador social guardó datos del expediente
+    // (cualquier sección). null = nunca se ha guardado.
+    expediente_last_saved_at: {
+      type: Date,
+      default: null,
+    },
+    // Momento en que se marcó "completado" (se marca/revierte a mano).
+    expediente_completed_at: {
+      type: Date,
+      default: null,
+    },
     // === Ficha de Salud e Inclusión (trabajo social) =================
     // Información de salud, inclusión y contacto de emergencia del alumno.
     // Gestionada por el trabajador social vía PATCH /api/students/:id/health.
@@ -601,6 +628,9 @@ studentSchema.index(
 
 studentSchema.index({ current_group_id: 1 });
 studentSchema.index({ workshop_group_id: 1 });
+// Listado de expedientes del trabajador social: filtra por escuela y
+// (opcionalmente) por estado para la barra de progreso / filtros.
+studentSchema.index({ school: 1, expediente_status: 1 });
 studentSchema.index({ last_name: 1, first_name: 1 });
 studentSchema.index({ guardians: 1 });
 // Nota: el índice de fcm_token ahora vive en Guardian.model.js sobre guardian.fcm_token
