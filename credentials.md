@@ -166,6 +166,16 @@
 - **Role:** prefect
 - **ID:** `6a88fff8f25bfd529ec32f8e`
 
+## Trabajo Social (prueba web)
+
+### PRUEBA TRABAJO SOCIAL WEB
+- **Email:** `prueba.social@sec47.edu.mx`
+- **Phone:** 5512340047
+- **Password:** `Sec47_2025!`
+- **Role:** social_worker
+- **ID:** `6afd3e2a7f71bc7082da82b2`
+- **Creado:** 2026-11-17 vía `POST /auth/signup` (tenant real 13DST0049E, para probar la sección web del trabajador social con el padrón real — 448 alumnos)
+
 ---
 
 # Students and Guardians - Test Credentials
