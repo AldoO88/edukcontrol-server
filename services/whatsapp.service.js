@@ -1,51 +1,39 @@
-// Servicio de WhatsApp Business API vía Twilio.
-// Reemplaza al mock sms.service.js para OTPs de activación y recuperación
-// de contraseña. Se usa Twilio porque Expo / EAS ya está configurado
-// para consumir sus webhooks y simplifica el cambio cuando migremos
-// push notifications de Expo.
+// Servicio de WhatsApp OTP vía SMS Masivos (integración oficial
+// "remitente Authenticate").
 //
-// Plantilla de Authentication (Meta exige este formato desde Jun 2023):
-//   - El cuerpo NO se personaliza: preset localizado de Meta
-//     "<código> es tu código de verificación" + recomendación de
-//     seguridad opcional ("no compartas este código") + caducidad
-//     opcional ("Este código caduca en N minutos").
-//   - Botón Copy Code obligatorio.
-//   - `code_expiration_minutes: 10` (alineado con TTL del OTP en User.otpCode).
-//   - Una sola variable {{1}} = código de 6 dígitos.
-//   - Categoría: AUTHENTICATION.
-// El Content Template SID (TWILIO_OTP_TEMPLATE_ID) debe estar aprobado
-// por Meta antes del primer envío real.
+// Migración 2026-11-25: antes iba por Twilio + plantilla Meta
+// (AUTHENTICATION). Con SMS Masivos el canal whatsapp NO requiere
+// cuenta de WhatsApp Business ni plantilla aprobada por Meta: la
+// integración Authenticate es "todo en uno" y usa su plantilla fija de
+// verificación. El API ignora company/message cuando channel=whatsapp;
+// el código (`code_custom`) SÍ va embebido en esa plantilla.
 //
-// Errores Twilio manejados:
-//   21211  - Invalid 'To' phone number
-//   63007  - Recipient not opted in
-//   63016  - Template not approved
-//   63033  - Template paused
-//   63038  - WhatsApp session not found (sandbox sin opt-in)
+// El envío real vive en smsmasivos.service.js (POST /v2/otp con
+// code_custom). Acá quedan:
+//   - OTP_ECHO (bypass de prueba, mismo comportamiento que sms.service)
+//   - toE164MX (lo usa webhooks.controller.js para parsear el webhook
+//     legacy de Twilio, que sigue activo hasta la Fase 4 de limpieza)
+//   - Re-export de las clases de error con sus nombres históricos
+//     (`TwilioError` = alias de OtpProviderError) para NO romper los
+//     `instanceof` de auth.controller.
+//
+// Consentimiento WhatsApp: opcional desde la corrección 4.2.3(i) de
+// Apple. El OTP se envía SIEMPRE por SMS; WhatsApp va además cuando el
+// usuario eligió el canal (delivery_channel=whatsapp) — ver
+// services/otp-delivery.service.js. El 451 de la era Twilio se dejó de
+// responder.
 
-const twilio = require("twilio");
+const {
+  sendOtpCode,
+  OtpProviderError,
+  InvalidPhoneError,
+} = require("./smsmasivos.service");
 
 // =====================================================================
-// OTP_ECHO: bypass temporal para validar flujos sin Twilio.
-// ---------------------------------------------------------------------
-// Mientras la template de Meta no esté aprobada (o en cualquier momento
-// que Twilio no esté configurado), permite probar los flujos de
-// activación y recuperación de contraseña sin enviar WhatsApp real.
-//
-// Activación: setear OTP_ECHO=console (o 1/true) en .env / Render.
-// Cuando está activo, sendOtpViaWhatsApp():
-//   - NO contacta a Twilio (no requiere credenciales ni template).
-//   - Imprime el código en consola: `[otp-echo] purpose=... to=... code=123456`.
-//   - Devuelve `{ success: true, messageSid: "echo", status: "echo" }`.
-//   - El OTP sigue persistido con TTL de 10 min en User.otpCode, así
-//     que verify-otp y activate-account funcionan exactamente igual
-//     que con WhatsApp real.
-//
-// Default (unset/0/false): comportamiento normal de Twilio.
-//
-// ⚠️ NUNCA dejar activo en producción con usuarios reales: el código
-// solo aparece en logs del servidor, no se entrega al usuario vía
-// WhatsApp — quedaría atrapado sin poder activar/recuperar.
+// OTP_ECHO: si OTP_ECHO está activo, NO se contacta al proveedor y el
+// código se imprime en consola (`[otp-echo] ...`). Útil para probar
+// flujos sin gastar saldo.
+// ⚠️ NUNCA dejar activo en producción con usuarios reales.
 // =====================================================================
 const isOtpEchoEnabled = () => {
   const v = process.env.OTP_ECHO;
@@ -53,171 +41,63 @@ const isOtpEchoEnabled = () => {
   return ["1", "true", "console", "yes", "on"].includes(String(v).toLowerCase());
 };
 
-// Inicialización lazy para no romper el arranque del server si las
-// credenciales no están configuradas todavía (ej. dev sin Twilio).
-let twilioClient = null;
-
-const getClient = () => {
-  if (twilioClient) return twilioClient;
-  const sid = process.env.TWILIO_ACCOUNT_SID;
-  const token = process.env.TWILIO_AUTH_TOKEN;
-  if (!sid || !token) {
-    throw new Error(
-      "Twilio credentials missing. Set TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN in .env"
-    );
-  }
-  twilioClient = twilio(sid, token);
-  return twilioClient;
-};
-
-// Custom errors para que el caller pueda mapear a HTTP status codes sin
-// acoplar a los códigos numéricos de Twilio.
-class TwilioError extends Error {
-  constructor(code, message) {
-    super(message);
-    this.name = "TwilioError";
-    this.code = code;
-  }
-}
-
-class ConsentRequiredError extends TwilioError {
-  constructor(message = "Recipient has not opted in to WhatsApp messages.") {
-    super("CONSENT_REQUIRED", message);
-    this.name = "ConsentRequiredError";
-  }
-}
-
-class TemplateNotApprovedError extends TwilioError {
-  constructor(message = "WhatsApp template not approved by Meta yet.") {
-    super("TEMPLATE_NOT_APPROVED", message);
-    this.name = "TemplateNotApprovedError";
-  }
-}
-
-class InvalidPhoneError extends TwilioError {
-  constructor(message = "Invalid phone number for WhatsApp delivery.") {
-    super("INVALID_PHONE", message);
-    this.name = "InvalidPhoneError";
-  }
-}
-
-class TemplateNotFoundError extends TwilioError {
-  constructor(message = "Content SID (template) not found in this Twilio account.") {
-    super("TEMPLATE_NOT_FOUND", message);
-    this.name = "TemplateNotFoundError";
-  }
-}
-
-// Mapea errores de Twilio a nuestros errores semánticos.
-// Twilio lanza RestException con .code (número) y .message.
-// Ver https://www.twilio.com/docs/errors/reference
-const mapTwilioError = (err) => {
-  const code = err?.code;
-  const msg = err?.message || "Twilio error";
-
-  if (code === 21211) return new InvalidPhoneError(msg);
-  if (code === 63007 || code === 63038) {
-    return new ConsentRequiredError(
-      "Recipient has not opted in to WhatsApp messages from EdukControl."
-    );
-  }
-  if (code === 63016 || code === 63033) {
-    return new TemplateNotApprovedError(msg);
-  }
-  // 21655: el Content SID no existe en esta cuenta (SID equivocado, de otra
-  // cuenta/subcuenta, borrado, o con espacios/saltos de línea en el env var).
-  if (code === 21655) {
-    return new TemplateNotFoundError(msg);
-  }
-  return new TwilioError(code, msg);
-};
-
-// Formatea un phoneNumber de 10 dígitos MX a E.164 (+52XXXXXXXXXX).
+// toE164MX(phone) — usado por webhooks.controller.js (webhook Twilio
+// legacy, Fase 4) para parsear el "To" del mensaje entrante.
+// Acepta formatos comunes en MX:
+//   "5512345678", "+525512345678", "525512345678", "+5215512345678"
+// Devuelve null si no se puede normalizar (evita crashes de DB).
 const toE164MX = (phone) => {
-  const digits = String(phone || "").replace(/\D/g, "");
+  if (!phone) return null;
+  const digits = String(phone).replace(/\D/g, "");
   if (digits.length === 10) return `+52${digits}`;
   if (digits.length === 12 && digits.startsWith("52")) return `+${digits}`;
-  if (digits.length === 13 && digits.startsWith("521")) return `+${digits}`;
-  // Cualquier otro formato: lo dejamos que Twilio lo rechace con 21211.
+  if (digits.length === 13 && digits.startsWith("521")) return `+52${digits.slice(3)}`;
   return `+${digits}`;
 };
 
 // sendOtpViaWhatsApp(phone, code, purpose)
-// phone: 10 dígitos MX (o ya formateado a E.164)
-// code:  6 dígitos (string)
-// purpose: 'activation' | 'password_reset' (metadata, no afecta el template hoy)
+// phone:   10 dígitos MX (o ya E.164 / con +52)
+// code:    6 dígitos (string) — code_custom embebido en la plantilla
+// purpose: 'activation' | 'password_reset'
 //
-// Returns { success: true, messageSid, status } en éxito.
-// Throws TwilioError (o subclase) en error.
+// Returns { success: true, messageSid, status, throttled? } en éxito.
+// Throws OtpProviderError (→503) o InvalidPhoneError (→400).
 const sendOtpViaWhatsApp = async (phone, code, purpose = "activation") => {
-  const to = toE164MX(phone);
-
-  // Modo echo: loguear el código y devolver éxito sin tocar Twilio.
-  // Útil cuando la template de Meta aún no está aprobada.
+  // Modo echo: loguear el código y devolver éxito sin tocar el proveedor.
   if (isOtpEchoEnabled()) {
     console.warn(
-      `[otp-echo] OTP_ECHO activo — WhatsApp DESHABILITADO, code en consola: ` +
-      `purpose=${purpose} to=${to} code=${code}`
+      `[otp-echo] OTP_ECHO activo — WHATSAPP DESHABILITADO, code en consola: ` +
+        `purpose=${purpose} to=${phone} code=${code}`
     );
-    return {
-      success: true,
-      messageSid: "echo",
-      status: "echo",
-      echoed: true,
-    };
+    return { success: true, messageSid: "echo", status: "echo", echoed: true };
   }
 
-  const from = process.env.TWILIO_WHATSAPP_FROM;
-  const contentSid = process.env.TWILIO_OTP_TEMPLATE_ID;
-  const statusCallback = process.env.TWILIO_STATUS_CALLBACK_URL;
+  const result = await sendOtpCode({
+    phone,
+    code,
+    channel: "whatsapp",
+    purpose,
+  });
 
-  if (!from) {
-    throw new Error(
-      "TWILIO_WHATSAPP_FROM missing in .env (format: +14155238886 in sandbox)."
-    );
-  }
-  if (!contentSid) {
-    throw new TemplateNotApprovedError(
-      "TWILIO_OTP_TEMPLATE_ID missing in .env. Submit and get the Authentication template approved in Twilio Console first."
-    );
-  }
+  console.log(
+    `[whatsapp] OTP sent purpose=${purpose} to=${phone} action=${result.action} ` +
+      `ref=${result.reference || "-"}${result.throttled ? " (throttled)" : ""}`
+  );
 
-  try {
-    const client = getClient();
-    const message = await client.messages.create({
-      from: `whatsapp:${from}`,
-      to: `whatsapp:${to}`,
-      contentSid,
-      // El template Authentication espera el código en la posición 1.
-      contentVariables: JSON.stringify({ "1": code }),
-      ...(statusCallback ? { statusCallback } : {}),
-    });
-
-    console.log(
-      `[whatsapp] OTP sent purpose=${purpose} to=${to} sid=${message.sid} status=${message.status}`
-    );
-
-    return {
-      success: true,
-      messageSid: message.sid,
-      status: message.status,
-    };
-  } catch (err) {
-    console.error(
-      `[whatsapp] sendOtpViaWhatsApp failed purpose=${purpose} to=${to} ` +
-      `contentSid=${contentSid} code=${err?.code} message=${err?.message}`
-    );
-    throw mapTwilioError(err);
-  }
+  return {
+    success: true,
+    messageSid: result.reference || null,
+    status: result.state || "pending",
+    throttled: !!result.throttled,
+  };
 };
 
 module.exports = {
   sendOtpViaWhatsApp,
+  // Utilidad compartida (webhooks.controller.js — webhook Twilio legacy).
   toE164MX,
-  // Errors (para que el caller pueda hacer instanceof checks)
-  TwilioError,
-  ConsentRequiredError,
-  TemplateNotApprovedError,
-  TemplateNotFoundError,
+  // Errors — nombres históricos para los `instanceof` de auth.controller:
+  OtpProviderError,
+  TwilioError: OtpProviderError, // alias (era el error del SDK Twilio)
   InvalidPhoneError,
 };

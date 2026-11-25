@@ -26,8 +26,20 @@ const whatsappService = require("./whatsapp.service");
 //   purpose:      'activation' | 'password_reset'
 //   sendWhatsApp: boolean — el caller calcula el consentimiento
 //
-// Returns { delivered, channels: { sms, whatsapp }, failures: [...] }.
-// Throws TwilioError (o subclase) solo si NINGÚN canal entregó.
+// Returns {
+//   delivered,             // al menos un canal aceptó el envío
+//   sent,                  // al menos un canal REALMENTE transmitió ESTE código
+//   throttled,             // algún canal respondió cooldown (<30s) — ver abajo
+//   channels, failures,
+// }.
+// Throws OtpProviderError (o subclase) solo si NINGÚN canal aceptó.
+//
+// Cooldown SMSMasivos (migración 2026-11-25): el proveedor aplica 30s
+// entre envíos al mismo número (`429 otp_throttled`). En ese caso el
+// servicio devuelve `{ success: true, throttled: true }` SIN transmitir
+// — el código VIGENTE (el que el usuario ya recibió) sigue siendo el
+// válido. `sent=false && throttled=true` le dice al controller que NO
+// rote el OTP guardado (auth.controller lo restaura).
 const deliverOtp = async ({ phone, code, purpose, sendWhatsApp = false }) => {
   const channels = { sms: null, whatsapp: null };
   const failures = [];
@@ -62,7 +74,7 @@ const deliverOtp = async ({ phone, code, purpose, sendWhatsApp = false }) => {
     }
   }
 
-  // Ningún canal entregó → propagar el error original (del SMS, que es
+  // Ningún canal aceptó → propagar el error original (del SMS, que es
   // el principal) para que el controller lo mapee a HTTP status.
   if (!channels.sms && !channels.whatsapp) {
     const smsFailure = failures.find((f) => f.channel === "sms");
@@ -72,14 +84,19 @@ const deliverOtp = async ({ phone, code, purpose, sendWhatsApp = false }) => {
     );
   }
 
+  // ¿Algún canal REALMENTE transmitió este código? (throttled = no.)
+  const attempted = [channels.sms, channels.whatsapp].filter(Boolean);
+  const sent = attempted.some((r) => !r.throttled);
+  const throttled = attempted.some((r) => r.throttled);
+
   console.log(
     `[otp-delivery] delivered purpose=${purpose} ` +
-      `sms=${channels.sms ? "ok" : "-"} ` +
-      `whatsapp=${channels.whatsapp ? "ok" : "off"} ` +
-      `failures=${failures.length}`
+      `sms=${channels.sms ? (channels.sms.throttled ? "throttled" : "ok") : "-"} ` +
+      `whatsapp=${channels.whatsapp ? (channels.whatsapp.throttled ? "throttled" : "ok") : "off"} ` +
+      `sent=${sent} failures=${failures.length}`
   );
 
-  return { delivered: true, channels, failures };
+  return { delivered: true, sent, throttled, channels, failures };
 };
 
 module.exports = { deliverOtp };

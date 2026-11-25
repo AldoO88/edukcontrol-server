@@ -601,9 +601,25 @@ DRY_RUN=0 MONGO_URI=… node scripts/backfill-guardian-active.js   # aplica
 
 Flipa a `true` los guardians con `isActive: false` O sin el campo (los 422 preexistentes). Idempotente.
 
-## OTP por WhatsApp/SMS (Twilio)
+## OTP por WhatsApp/SMS (SMS Masivos)
 
-**Proveedor:** Twilio. **Canales:** SMS **siempre** (canal principal, nativo del sistema — corrige App Store Guideline 4.2.3(i), que rechazaba exigir instalar WhatsApp para recibir el código) + WhatsApp **solo con consentimiento** del usuario (canal adicional, best-effort). Orquestación en `services/otp-delivery.service.js`; envío SMS en `services/sms.service.js`; WhatsApp (template Authentication de Meta) en `services/whatsapp.service.js`.
+**Proveedor:** **SMS Masivos** (MX, prepago por saldo, sin renta de número). **Migración 2026-11-25** desde Twilio (Twilio cobraba renta mensual por número + precio por mensaje). **Canales:** SMS **siempre** (canal principal, nativo del sistema — corrige App Store Guideline 4.2.3(i), que rechazaba exigir instalar WhatsApp para recibir el código) + WhatsApp **solo con consentimiento** del usuario (canal adicional, best-effort).
+
+**Arquitectura (POST `https://api.smsmasivos.com.mx/v2/otp`, header `apikey`, `fetch` global):**
+
+- `services/smsmasivos.service.js` — cliente HTTP único + clases de error. Usa **`code_custom`** = el código que YA generó y guardó nuestro backend (`User.otpCode`): el ciclo de vida del OTP sigue siendo NUESTRO (TTL 10 min, propósitos, rate limits, verify) y el proveedor solo entrega. Normaliza a 10 dígitos MX (`toMxDigits`). Timeout 15s.
+- `services/sms.service.js` — wrapper del canal `sms`: mensaje GSM-7 puro (sin acentos/emojis) con placeholders `{{code}}`/`{{company}}`, ≤160 chars expandido (un OTP nunca sale partido en dos SMS). + bypass `OTP_ECHO`.
+- `services/whatsapp.service.js` — wrapper del canal `whatsapp`: **integración oficial "remitente Authenticate"** — sin cuenta WhatsApp Business, sin plantilla aprobada por Meta; el API ignora `company`/`message` y usa su plantilla fija de verificación (el código custom SÍ va embebido). + bypass `OTP_ECHO` + `toE164MX` (la usa el webhook Twilio legacy) + re-export de errores con sus **nombres históricos** (`TwilioError` = alias de `OtpProviderError`) para no tocar los `instanceof` de `auth.controller`.
+- `services/otp-delivery.service.js` — orquestador (SMS siempre + WhatsApp best-effort). Además de `delivered`, devuelve `sent` (algún canal transmitió ESTE código) y `throttled` (algún canal respondió cooldown).
+- `controllers/auth.controller.js` — los 2 sitios de entrega (`requestActivation`, `requestPasswordReset`) capturan el OTP anterior y lo **restauran** si `delivery.sent === false && delivery.throttled` (ver cooldown abajo).
+
+**Particularidades IMPORTANTES del API:**
+
+- Los errores `auth_*` / `server_*` llegan con **HTTP 200 + `success: false`** en el body → revisar SIEMPRE el flag `success`, no solo el status.
+- **Cooldown de 30s entre envíos** al mismo número → `429 otp_throttled` (aplica con o sin `code_rotate`). Se trata como **éxito con `throttled: true`** (no se transmitió nada; el código vigente sigue siendo el que el usuario recibió) y el controller conserva el OTP guardado — así un doble tap <30s no deja al usuario con un código que nunca salió.
+- ⚠️ **Pendiente de validar en E2E:** si el cooldown es GLOBAL por número (cruza canales), un request dual SMS+WhatsApp seguido dejaría el canal WhatsApp en `throttled` (se loguea y se omite; el usuario igual recibe el SMS). Si confirma, resolver con canal único por request o stagger de ~31s.
+- `402 otp_insufficient_credits` → saldo agotado → `503`. `502 otp_send_failed` → `503`.
+- Límite propio ~5 OTP/h/IP (compatible con el rate limiter 5 req/h/IP de los endpoints OTP).
 
 **Selector en la app:** los endpoints OTP aceptan `delivery_channel: 'sms' | 'whatsapp'` (radio de la pantalla de activación/forgot-password). `'sms'` = solo SMS; `'whatsapp'` = SMS (respaldo) + WhatsApp — elegirlo ES consentimiento explícito y se persiste en `notification_prefs.whatsapp` con source `activation_request` / `password_reset_request`. Ausente = legacy (SMS + WhatsApp si hay opt-in).
 
@@ -611,12 +627,10 @@ Flipa a `true` los guardians con `isActive: false` O sin el campo (los 422 preex
 
 Ver `.env.example` para el detalle. Las claves son:
 
-- `TWILIO_ACCOUNT_SID`
-- `TWILIO_AUTH_TOKEN`
-- `TWILIO_SMS_FROM` (remitente con capacidad SMS; en prod: `+525629162116`)
-- `TWILIO_WHATSAPP_FROM` (en sandbox: `+14155238886`)
-- `TWILIO_OTP_TEMPLATE_ID` (Content SID `HXxxxxx`, post-aprobación de Meta)
-- `TWILIO_STATUS_CALLBACK_URL` (URL pública del webhook)
+- `SMSMASIVOS_API_KEY` — **requerido**; sin él los endpoints OTP responden `503 SMSMASIVOS_CONFIG_MISSING`. Se pega en Render (nunca en git/chat).
+- `SMSMASIVOS_COMPANY` (opcional, default `EdukControl` — aparece en `{{company}}` del SMS)
+- `SMSMASIVOS_API_URL` (opcional, override de tests)
+- Legacy (solo webhook, ver abajo): `TWILIO_AUTH_TOKEN`, `TWILIO_STATUS_CALLBACK_URL`
 
 ### Opt-in (obligatorio para cumplir Meta policy)
 
@@ -629,9 +643,9 @@ Todo usuario que reciba OTPs vía WhatsApp debe tener `notification_prefs.whatsa
 
 Los endpoints OTP (`/auth/request-activation`, `/auth/forgot-password/request`) **ya NO retornan `451`** por falta de opt-in (se eliminó el 2026-10-27: era un dead-end que forzaba instalar WhatsApp). El SMS sale siempre; sin opt-in solo se omite el envío por WhatsApp. El manejo de `451`/`consent_required` en los services de la app se conserva por compatibilidad, pero no debería dispararse.
 
-### Webhook de status
+### Webhook de status (LEGACY — pendiente Fase 4 de limpieza)
 
-Twilio POSTea a `TWILIO_STATUS_CALLBACK_URL` con estados:
+El envío ya NO pasa por Twilio, pero el webhook sigue montado y operativo para mensajes históricos. Twilio POSTea a `TWILIO_STATUS_CALLBACK_URL` con estados:
 `queued | sent | delivered | read | failed | undelivered`. Si Twilio
 reporta `failed`/`undelivered` con código `63007` (recipient not opted-in)
 o `63038` (session not found), el handler sincroniza `opted_in = false`
@@ -644,44 +658,52 @@ en `routes/auth-webhooks.routes.js#verifyTwilioSignature` — firma inválida �
 `403`. Si faltan `TWILIO_AUTH_TOKEN` o `TWILIO_STATUS_CALLBACK_URL` se omite
 la validación con un warning (no hay callbacks legítimos sin esas vars).
 
-### Códigos de error Twilio manejados
+**Fase 4 pendiente:** retirar `routes/auth-webhooks.routes.js` + `controllers/webhooks.controller.js`, quitar el dep `twilio` de `package.json`, las vars `TWILIO_*` restantes de Render/.env, y (opcional) el texto legal "Twilio / WhatsApp" en `edukcontrol-web/src/components/legal/PrivacyPolicy.tsx`.
 
-| Código | Significado | Mapeo HTTP |
+### Códigos de error SMS Masivos → mapeo HTTP
+
+| Condición | Origen | Mapeo HTTP |
 |--------|-------------|------------|
-| `21211` | Invalid 'To' phone number | `400` |
-| `63007` / `63038` | Recipient not opted in / session not found | `451` |
-| `63016` / `63033` | Template not approved / paused | `503` |
-| `21655` | Content SID no existe en la cuenta (revisar `TWILIO_OTP_TEMPLATE_ID`: SID `HX...` de la misma cuenta, sin espacios) | `503` |
+| Teléfono que no normaliza a 10 dígitos MX, o `otp_invalid_param` con hint de `phone_number` | validación propia / API | `400` (`InvalidPhoneError`) |
+| `429 otp_throttled` (cooldown 30s) | API | **`200` conservando el OTP vigente** (ver arriba) |
+| `auth_*` (key inválida, IP no permitida) — llegan con HTTP 200 + `success:false` | API | `503` |
+| `402 otp_insufficient_credits` (saldo agotado) | API | `503` |
+| `502 otp_send_failed`, `otp_message_invalid`, `otp_missing_param`, `otp_invalid_channel`, `otp_internal`, `server_*` | API | `503` |
+| Red/timeout/no-JSON (`SMS_NETWORK`, `SMS_BAD_RESPONSE`) | fetch | `503` |
+
+Todos los fallos de proveedor son `OtpProviderError` (o subclase) → `auth.controller` responde `503 OTP service temporarily unavailable`.
 
 ### Archivos clave
 
-- `services/whatsapp.service.js` — wrapper de Twilio + custom errors
-- `controllers/webhooks.controller.js` — handler del status callback
-- `routes/auth-webhooks.routes.js` — montado en `/auth/webhooks`
-- `services/sms.service.js` — DEPRECATED, solo loggea a consola
+- `services/smsmasivos.service.js` — cliente HTTP + clases de error (`OtpProviderError`, `InvalidPhoneError`)
+- `services/sms.service.js` — wrapper canal SMS + `OTP_ECHO`
+- `services/whatsapp.service.js` — wrapper canal WhatsApp + `OTP_ECHO` + `toE164MX` + re-export de errores (`TwilioError` alias)
+- `services/otp-delivery.service.js` — orquestador SMS+WhatsApp
+- `controllers/auth.controller.js` — entrega OTP con manejo de throttled (2 sitios)
+- `controllers/webhooks.controller.js` + `routes/auth-webhooks.routes.js` — webhook Twilio LEGACY (retirar en Fase 4)
 - `models/User.model.js` y `models/Guardian.model.js` — campo `notification_prefs.whatsapp`
 
-### `OTP_ECHO` — bypass temporal para probar flujos sin Meta aprobada
+### `OTP_ECHO` — bypass temporal para probar flujos sin saldo
 
-Mientras la Authentication template de Meta no está aprobada, Twilio devuelve `63016` y los endpoints OTP retornan `503`. Para validar los flujos de activación (`/auth/request-activation`) y recuperación de contraseña (`/auth/forgot-password/request`) end-to-end sin esperar la aprobación, existe un modo de bypass controlado por env:
+Para validar los flujos de activación (`/auth/request-activation`) y recuperación de contraseña (`/auth/forgot-password/request`) end-to-end sin gastar saldo SMSMasivos (o sin key configurada), existe un modo de bypass controlado por env:
 
 - **Var:** `OTP_ECHO` (unset / `0` / `false` = off por default; `1` / `true` / `console` / `yes` / `on` = on).
-- **Efecto:** `services/whatsapp.service.js#sendOtpViaWhatsApp` loguea el código en consola como `[otp-echo] purpose=… to=… code=123456` y devuelve `{ success: true, messageSid: "echo", status: "echo", echoed: true }` — **sin contactar Twilio**, no requiere credenciales ni template.
-- **Persistencia del OTP:** el código sigue hasheándose y guardándose en `User.otpCode` con TTL de 10 min, así `verify-otp` y `activate-account` / `forgot-password/reset` funcionan idéntico que con WhatsApp real.
+- **Efecto:** `sendOtpViaSms` / `sendOtpViaWhatsApp` loguean el código en consola como `[otp-echo] purpose=… to=… code=123456` y devuelven `{ success: true, messageSid: "echo", status: "echo", echoed: true }` — **sin contactar al proveedor**, no requiere key ni saldo.
+- **Persistencia del OTP:** el código sigue guardándose en `User.otpCode` con TTL de 10 min, así `verify-otp` y `activate-account` / `forgot-password/reset` funcionan idéntico que con envío real. En echo `delivery.sent` queda en `true` (el bypass cuenta como "transmitido").
 - **Warning de arranque:** `app.js` imprime un banner bien visible al boot si la flag está activa (imposible olvidarla en Render Logs).
 - **Cómo probar:** setear `OTP_ECHO=console` en Render, deploy, pedir OTP desde la app, abrir Render Logs y buscar la línea `[otp-echo]` con el código.
-- **⚠️ Apagar siempre** que la template de Meta esté aprobada y las 5 vars `TWILIO_*` estén en Render. Con la flag activa los códigos no salen del servidor: el usuario queda atrapado sin poder activar / recuperar.
+- **⚠️ Apagar siempre** que `SMSMASIVOS_API_KEY` esté en Render con saldo. Con la flag activa los códigos no salen del servidor: el usuario queda atrapado sin poder activar / recuperar.
 
-### Costos estimados
+### Costos
 
-- ~$0.04 USD por OTP vía Authentication template.
-- 1000 usuarios × 2 OTPs/año = ~$80 USD/año.
+- SMS Masivos prepago: saldo que se consume por mensaje enviado, **sin renta mensual**. El saldo se carga desde el panel (`app.smsmasivos.com.mx`).
+- `otp_throttled` no gasta saldo (el envío no se hace).
 
 ### Cuándo reconsiderar
 
-- Si excedemos 500K mensajes/mes → migrar a 360dialog (más barato).
-- Si necesitamos SMS fallback → agregar Twilio SMS side-by-side.
-- Si Meta cambia política de Authentication templates → revisar documentación oficial.
+- Si el cooldown de 30s cruza canales y necesitamos dual-channel simultáneo → stagger de ~31s o canal único por request (pendiente de E2E).
+- Si excedemos volumen → comparar precios de 360dialog / MessageBird.
+- Si el template fijo de WhatsApp no sirve → revisar si SMS Masivos ofrece plantillas personalizables o migrar solo ese canal.
 
 ## Known dead weight
 

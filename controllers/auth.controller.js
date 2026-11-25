@@ -707,21 +707,42 @@ const requestActivationController = async (req, res, next) => {
     const otp = generateOtp();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
+    // Captura el OTP anterior: si el proveedor responde cooldown
+    // (<30s desde el último envío — doble tap) y NINGÚN canal
+    // transmitió el código nuevo, hay que conservar el anterior: es el
+    // que el usuario realmente recibió (otp-delivery devuelve
+    // sent=false && throttled=true en ese caso — ver SMSMasivos).
+    const prevOtpCode = user.otpCode ?? null;
+    const prevOtpExpiresAt = user.otpExpiresAt ?? null;
+
     user.otpCode = otp;
     user.otpExpiresAt = expiresAt;
     await user.save();
 
     // Entrega del código: SMS siempre + WhatsApp según elección/consent.
-    await otpDeliveryService.deliverOtp({
+    const delivery = await otpDeliveryService.deliverOtp({
       phone: phoneNumber,
       code: otp,
       purpose: "activation",
       sendWhatsApp,
     });
 
+    let finalExpiresAt = expiresAt;
+    if (delivery && delivery.sent === false && delivery.throttled) {
+      // Nada salió (cooldown): restaura el OTP vigente anterior.
+      user.otpCode = prevOtpCode;
+      user.otpExpiresAt = prevOtpExpiresAt;
+      await user.save();
+      finalExpiresAt = prevOtpExpiresAt || expiresAt;
+      console.warn(
+        `[requestActivation] OTP throttled by provider (<30s cooldown) — ` +
+          `keeping previous code for ${phoneNumber}`
+      );
+    }
+
     res.status(200).json({
       message: "Activation code sent to your phone.",
-      expiresAt,
+      expiresAt: finalExpiresAt,
     });
   } catch (error) {
     // Errores de entrega: SMS es el canal principal; WhatsApp es
@@ -733,7 +754,7 @@ const requestActivationController = async (req, res, next) => {
       });
     }
     if (error instanceof whatsappService.TwilioError) {
-      // Config faltante (TWILIO_SMS_FROM / creds) o error de la API.
+      // Config faltante (SMSMASIVOS_API_KEY) o error de la API.
       console.error(
         `[requestActivation] OTP delivery failed: ${error.code} ${error.message}`
       );
@@ -1215,21 +1236,40 @@ const requestPasswordReset = async (req, res, next) => {
     const otp = generateOtp();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
+    // Captura el OTP anterior: si el proveedor responde cooldown
+    // (<30s desde el último envío) y NINGÚN canal transmitió el código
+    // nuevo, se conserva el anterior (es el que el usuario recibió) —
+    // ver comentario detallado en requestActivation.
+    const prevOtpCode = user.otpCode ?? null;
+    const prevOtpExpiresAt = user.otpExpiresAt ?? null;
+
     user.otpCode = otp;
     user.otpExpiresAt = expiresAt;
     await user.save();
 
     // Entrega del código: SMS siempre + WhatsApp solo con consentimiento.
-    await otpDeliveryService.deliverOtp({
+    const delivery = await otpDeliveryService.deliverOtp({
       phone: phoneNumber,
       code: otp,
       purpose: "password_reset",
       sendWhatsApp,
     });
 
+    let finalExpiresAt = expiresAt;
+    if (delivery && delivery.sent === false && delivery.throttled) {
+      user.otpCode = prevOtpCode;
+      user.otpExpiresAt = prevOtpExpiresAt;
+      await user.save();
+      finalExpiresAt = prevOtpExpiresAt || expiresAt;
+      console.warn(
+        `[requestPasswordReset] OTP throttled by provider (<30s cooldown) — ` +
+          `keeping previous code for ${phoneNumber}`
+      );
+    }
+
     res.status(200).json({
       message: "Password reset code sent to your phone.",
-      expiresAt,
+      expiresAt: finalExpiresAt,
     });
   } catch (error) {
     // Mismo mapeo que request-activation: SMS es el canal principal,
