@@ -711,6 +711,147 @@ const sendAnnouncementNotification = async (announcement) => {
 };
 
 // =====================================================================
+// sendStaffAnnouncementNotification(announcement)
+// =====================================================================
+// Notifica al STAFF de la escuela un aviso con targetType "general".
+// Decisión de producto (2026-11-24): los avisos a grupo/alumno quedan
+// en el feed del staff SIN push (tienen alcance específico); solo los
+// mensajes generales disparan notificación al personal.
+//
+// Patrón idéntico a dispatchToGuardians pero sobre User:
+//   1) Persiste la campanita in-app para TODO el staff activo (aunque
+//      no tenga token — mismo criterio que sendToStaffUser).
+//   2) Push en batch a los que sí tienen fcm_token (Expo Push Token).
+//   3) Invalida tokens stale (DeviceNotRegistered) en User.
+// El autor del aviso (sender) queda excluido — no recibe su propio
+// mensaje.
+// =====================================================================
+const STAFF_ROLES_FOR_ANNOUNCEMENTS = [
+  "admin",
+  "principal",
+  "registrar",
+  "teacher",
+  "prefect",
+  "social_worker",
+];
+
+const sendStaffAnnouncementNotification = async (announcement) => {
+  if (announcement.targetType !== "general") {
+    return { dispatched: 0, reason: "not_general" };
+  }
+
+  const senderId = announcement.sender?._id || announcement.sender;
+  const staff = await User.find({
+    school: announcement.school,
+    role: { $in: STAFF_ROLES_FOR_ANNOUNCEMENTS },
+    isActive: true,
+    ...(senderId ? { _id: { $ne: senderId } } : {}),
+  })
+    .select("fcm_token role school")
+    .lean();
+
+  if (!staff || staff.length === 0) {
+    return { dispatched: 0, reason: "no_staff" };
+  }
+
+  // Mismo truncado/título que el push a tutores (Android ~240 chars).
+  const truncated =
+    announcement.message && announcement.message.length > 180
+      ? `${announcement.message.slice(0, 177)}...`
+      : announcement.message || "";
+
+  const priorityPrefix =
+    announcement.priority === "urgent" ? "🚨 Urgente: " : "";
+  const title = `${priorityPrefix}${announcement.title}`;
+
+  const payload = {
+    title,
+    body: truncated,
+    channelId: CHANNELS.announcement,
+    data: {
+      kind: "announcement",
+      announcement_id: String(announcement._id),
+      targetType: announcement.targetType,
+      priority: announcement.priority,
+    },
+  };
+
+  // 1) Campanita in-app — SIEMPRE, tenga o no token (best-effort).
+  let persisted = 0;
+  for (const user of staff) {
+    try {
+      await notificationsService.persistNotification({
+        recipient_user_id: user._id,
+        recipient_role: user.role,
+        school: user.school || announcement.school,
+        kind: payload.data.kind,
+        title: payload.title,
+        body: payload.body,
+        data: payload.data,
+        channel_id: payload.channelId,
+      });
+      persisted += 1;
+    } catch (persistErr) {
+      console.warn(
+        `[announcements] Failed to persist staff notification for ${user._id}: ${persistErr.message}`
+      );
+    }
+  }
+
+  // 2) Push batch a los que tienen token (dedupe por token: un mismo
+  //    Expo token no debe recibir el mensaje dos veces).
+  const tokenToUserId = new Map();
+  for (const user of staff) {
+    if (
+      typeof user.fcm_token === "string" &&
+      user.fcm_token.trim().length > 0 &&
+      !tokenToUserId.has(user.fcm_token)
+    ) {
+      tokenToUserId.set(user.fcm_token, user._id);
+    }
+  }
+  const tokens = [...tokenToUserId.keys()];
+
+  // Sin tokens: la campanita ya quedó poblada, retornamos temprano.
+  if (tokens.length === 0) {
+    return { dispatched: 0, reason: "no_tokens", persisted };
+  }
+
+  const result = await sendToTokens(tokens, payload);
+
+  // 3) Invalidar tokens stale (mismo patrón que dispatchToGuardians).
+  const invalidUserIds = [];
+  if (result.tickets && Array.isArray(result.tickets)) {
+    result.tickets.forEach((ticket, idx) => {
+      if (ticket.status === "ok") return;
+      if (ticket.details?.error !== "DeviceNotRegistered") return;
+      const uid = tokenToUserId.get(tokens[idx]);
+      if (uid) invalidUserIds.push(uid);
+    });
+  }
+
+  let invalidated = 0;
+  if (invalidUserIds.length > 0) {
+    const upd = await User.updateMany(
+      { _id: { $in: invalidUserIds } },
+      { $set: { fcm_token: null } }
+    );
+    invalidated = upd.modifiedCount;
+    console.log(
+      `[announcements] Invalidated ${invalidated} stale staff expo push token(s)`
+    );
+  }
+
+  return {
+    dispatched: result.successCount,
+    tokens: tokens.length,
+    persisted,
+    invalidated,
+    reason: resolveSendFailureReason(result),
+  };
+};
+
+// =====================================================================
 // Notificaciones al STAFF (cuando un tutor actúa sobre un citatorio)
 // =====================================================================
 
@@ -970,6 +1111,7 @@ module.exports = {
   sendCitationConfirmedNotification,
   sendCitationRescheduleRequestNotification,
   sendAnnouncementNotification,
+  sendStaffAnnouncementNotification,
   sendConductNotification,
   sendConductCancelledNotification,
 

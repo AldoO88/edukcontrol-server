@@ -336,6 +336,9 @@ const createAnnouncement = async (req, res, next) => {
     // 9) Disparar push a los tutores afectados (async, mismo patrón que
     //    citations y attendance). Solo si Firebase está inicializado;
     //    la función lo maneja internamente y devuelve { dispatched: 0, reason }.
+    //    Además, si el aviso es GENERAL, notifica también al staff de la
+    //    escuela (campanita + push; el autor queda excluido). Los avisos
+    //    a grupo/alumno no disparan push a staff (solo feed).
     process.nextTick(() => {
       (async () => {
         try {
@@ -356,6 +359,30 @@ const createAnnouncement = async (req, res, next) => {
         } catch (err) {
           console.error(
             `[announcements] Background notification error for ${populated._id}: ${err.message}`
+          );
+        }
+
+        try {
+          const staffResult =
+            await notificationService.sendStaffAnnouncementNotification(
+              populated
+            );
+          if (staffResult && staffResult.persisted > 0) {
+            console.log(
+              `[announcements] Staff notification for ${populated._id}: persisted=${staffResult.persisted} dispatched=${staffResult.dispatched}/${staffResult.tokens || 0} tokens`
+            );
+          } else if (
+            staffResult &&
+            staffResult.reason &&
+            staffResult.reason !== "not_general"
+          ) {
+            console.log(
+              `[announcements] No staff notification for ${populated._id}: ${staffResult.reason}`
+            );
+          }
+        } catch (err) {
+          console.error(
+            `[announcements] Staff notification error for ${populated._id}: ${err.message}`
           );
         }
       })();
