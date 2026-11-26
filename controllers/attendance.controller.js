@@ -171,8 +171,26 @@ const deviceTriggerController = async (req, res, next) => {
 // Soporta filtro por group_id (primero busca student_ids del grupo).
 const getAttendanceLogsController = async (req, res, next) => {
   try {
-    const { student_id, group_id, from, to, event_type, status, exit_missing, page = 1, limit = 50 } =
-      req.query;
+    const {
+      student_id,
+      group_id,
+      from,
+      to,
+      event_type,
+      status,
+      exit_missing,
+      justified,
+      page = 1,
+      limit = 50,
+    } = req.query;
+
+    // Paginación calculada ANTES del filtro por grupo: el return
+    // temprano del grupo vacío referencia limitNum y, como vivía
+    // debajo, caía en temporal dead zone (ReferenceError → 500 en vez
+    // de lista vacía). Fix 2026-11-25.
+    const pageNum = Math.max(parseInt(page, 10) || 1, 1);
+    const limitNum = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200);
+    const skip = (pageNum - 1) * limitNum;
 
     const filter = { ...tenantFilter(req) };
 
@@ -215,6 +233,14 @@ const getAttendanceLogsController = async (req, res, next) => {
       filter.event_type = "entry";
     }
 
+    // justified=true|false → solo inasistencias justificadas o pendientes.
+    // Lo usa la pantalla de inasistencias del trabajador social (web) para
+    // pedir por estado con conteos exactos del server. Opt-in: sin el
+    // parámetro el comportamiento es idéntico al de siempre.
+    if (justified === "true" || justified === "false") {
+      filter.justified = justified === "true";
+    }
+
     if (from || to) {
       filter.event_time = {};
       if (from) {
@@ -232,10 +258,6 @@ const getAttendanceLogsController = async (req, res, next) => {
         filter.event_time.$lte = toDate;
       }
     }
-
-    const pageNum = Math.max(parseInt(page, 10) || 1, 1);
-    const limitNum = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200);
-    const skip = (pageNum - 1) * limitNum;
 
     const [items, total] = await Promise.all([
       AttendanceLog.find(filter)

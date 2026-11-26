@@ -766,7 +766,9 @@ const getTeacherSchedule = async (req, res, next) => {
 
 // =====================================================================
 // GET /api/social-worker/school-absences
-// Top alumnos con más faltas escolares.
+// Alumnos con faltas escolares rankeados (mayor → menor). SIN cap de
+// filas: la web del trabajador social lista TODOS los alumnos con
+// faltas en el tab "Por alumno" con búsqueda por nombre (2026-11-25).
 // Query params: from, to, group_id
 // =====================================================================
 const getSchoolAbsences = async (req, res, next) => {
@@ -828,7 +830,9 @@ const getSchoolAbsences = async (req, res, next) => {
         },
       },
       { $sort: { absenceCount: -1 } },
-      { $limit: 20 },
+      // Sin $limit: el tab "Por alumno" de la web necesita TODOS los
+      // alumnos con faltas (antes estaba capado a 20 y solo servía
+      // como "top" del resumen).
     ]);
 
     if (aggregation.length === 0) {

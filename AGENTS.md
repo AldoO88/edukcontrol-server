@@ -112,7 +112,7 @@ All under `/api` (no `/v1` prefix). Auth endpoints are under `/auth` (no `/api` 
 | POST | `/api/attendance/device-trigger` | **device API key** | Called by hardware. See below. |
 | GET/POST | `/iclock/cdata`, `/iclock/getrequest`, `/iclock/devicecmd` | **ZKTeco serial allowlist** | ADMS push from hybrid RFID + face terminals. Outside `/api` (path fixed in firmware). Plain-text responses only. See below. |
 | POST | `/hikvision/event/:token` | **event token in path** | HTTP Listening push from Hikvision DS-K1T3xx access terminals. Outside `/api`. Plain-text responses only. See below. |
-| GET | `/api/attendance/logs` | JWT + any staff role | Paginated (`limit` max 200), filter by `student_id`, `event_type`, `from`, `to`. |
+| GET | `/api/attendance/logs` | JWT + any staff role | Paginated (`limit` max 200), filter by `student_id`, `group_id`, `event_type`, `status`, `justified` (`true`/`false`, added 2026-11-25), `exit_missing`, `from`, `to`. |
 | POST | `/api/conduct-logs` | JWT + staff (admin, principal, registrar, teacher, prefect, social_worker) | Crea un evento de conducta (`eventType: "demerit" \| "merit"`). `points_impact` se copia de la `ConductConfig` vigente de la escuela. Invalida el cache del dashboard de los tutores del alumno. |
 | GET | `/api/conduct-logs` | JWT + staff | Lista paginada, filtra por `student_id`, `school_year_id`, `eventType`, `severity`, `status`, `from`, `to`. |
 | GET | `/api/conduct-logs/:logId` | JWT + staff | Detalle. |
