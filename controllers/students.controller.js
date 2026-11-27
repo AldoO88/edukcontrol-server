@@ -222,7 +222,7 @@ const getStudentById = async (req, res, next) => {
       ...tenantFilter(req),
     })
       .populate("current_group_id", "grade section school_year_id head_teacher_id")
-      .populate("guardians", "name lastname relationship phone");
+      .populate("guardians", "name lastname relationship phone email");
 
     if (!student) {
       return res.status(404).json({ message: `No student with id: ${studentId}` });

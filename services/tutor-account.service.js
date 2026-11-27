@@ -27,7 +27,7 @@ const User = require("../models/User.model");
 const TUTOR_DEFAULT_OPTED_IN = true;
 const TUTOR_DEFAULT_SOURCE = "admin_form";
 
-const ensureTutorUser = async ({ school, name, lastname, phone }) => {
+const ensureTutorUser = async ({ school, name, lastname, phone, email }) => {
   if (!phone || !school || !name) {
     return {
       ok: false,
@@ -35,6 +35,12 @@ const ensureTutorUser = async ({ school, name, lastname, phone }) => {
       message: "school, name y phone son requeridos",
     };
   }
+
+  // Normaliza el correo (opcional): minúsculas para que el lookup de
+  // Sign in with Apple (`User.find({ email })`, case-sensitive) matchee,
+  // y "" → null para no chocar con el índice único parcial.
+  const emailNorm =
+    email && String(email).trim() ? String(email).trim().toLowerCase() : null;
 
   // Buscamos por escuela + teléfono. El índice único garantiza que
   // existe a lo sumo un User con esa combinación.
@@ -45,14 +51,33 @@ const ensureTutorUser = async ({ school, name, lastname, phone }) => {
     if (user.role === "tutor") {
       // Si la última captura del nombre dejó los apellidos vacíos y
       // ahora los tenemos, sincronizamos para que el dashboard del
-      // tutor pueda saludar "Hola, <name> <last_name>".
-      if (
+      // tutor pueda saludar "Hola, <name> <last_name>". Igual con el
+      // correo: solo completamos si estaba VACÍO (misma regla "no
+      // pisar datos" que Guardian al reusar por teléfono); un cambio
+      // EXPLÍCITO va por PUT /api/guardians/:id.
+      const needsNameSync =
         (!user.last_name || !user.last_name.trim()) &&
         lastname &&
-        lastname.trim()
-      ) {
-        user.last_name = lastname.trim();
-        await user.save();
+        lastname.trim();
+      const needsEmailSync = !user.email && emailNorm;
+      if (needsNameSync || needsEmailSync) {
+        if (needsNameSync) user.last_name = lastname.trim();
+        if (needsEmailSync) user.email = emailNorm;
+        try {
+          await user.save();
+        } catch (saveErr) {
+          // 11000 = el correo ya pertenece a otra cuenta de la
+          // escuela (uniq_school_email). El Guardian queda creado;
+          // avisamos al caller.
+          if (saveErr && saveErr.code === 11000) {
+            return {
+              ok: false,
+              reason: "email_taken",
+              message: "El correo ya está registrado en la escuela",
+            };
+          }
+          throw saveErr;
+        }
       }
       return { ok: true, user, reused: true };
     }
@@ -79,22 +104,42 @@ const ensureTutorUser = async ({ school, name, lastname, phone }) => {
   const lastNameForUser =
     lastname && lastname.trim() ? lastname.trim() : name.trim();
 
-  user = await User.create({
-    name: name.trim(),
-    last_name: lastNameForUser,
-    role: "tutor",
-    school,
-    phoneNumber: phone,
-    // isActive nace TRUE (default del modelo): el tutor está "activo"
-    // y pendiente de fijar password vía OTP (sin password = sin activar).
-    notification_prefs: {
-      whatsapp: {
-        opted_in: TUTOR_DEFAULT_OPTED_IN,
-        opted_in_at: new Date(),
-        source: TUTOR_DEFAULT_SOURCE,
+  try {
+    user = await User.create({
+      name: name.trim(),
+      last_name: lastNameForUser,
+      role: "tutor",
+      school,
+      phoneNumber: phone,
+      // Correo opcional del Apple ID (Sign in with Apple matchea por
+      // aquí). Ausente en el import Excel y en altas sin el dato.
+      email: emailNorm,
+      // isActive nace TRUE (default del modelo): el tutor está "activo"
+      // y pendiente de fijar password vía OTP (sin password = sin activar).
+      notification_prefs: {
+        whatsapp: {
+          opted_in: TUTOR_DEFAULT_OPTED_IN,
+          opted_in_at: new Date(),
+          source: TUTOR_DEFAULT_SOURCE,
+        },
       },
-    },
-  });
+    });
+  } catch (createErr) {
+    if (createErr && createErr.code === 11000) {
+      // Puede ser {school, phoneNumber} (carrera con otra alta) o
+      // {school, email} (correo ya registrado en la escuela).
+      const dupField = Object.keys(createErr.keyPattern || {})[0] || "";
+      return {
+        ok: false,
+        reason: dupField === "email" ? "email_taken" : "phone_taken",
+        message:
+          dupField === "email"
+            ? "El correo ya está registrado en la escuela"
+            : "Teléfono ya registrado",
+      };
+    }
+    throw createErr;
+  }
 
   return { ok: true, user, reused: false };
 };

@@ -469,7 +469,8 @@ const getMyGuardians = async (req, res, next) => {
 //     sigue siendo la vía de baja.
 const createGuardian = async (req, res, next) => {
   try {
-    const { name, lastname, phone, relationship, user_id, students } = req.body;
+    const { name, lastname, phone, relationship, user_id, students, email } =
+      req.body;
 
     if (!name || !phone || !relationship) {
       return res
@@ -486,6 +487,31 @@ const createGuardian = async (req, res, next) => {
       return res
         .status(400)
         .json({ message: "school is required (provide it in body for super_admin)." });
+    }
+
+    // Correo opcional del Apple ID (Sign in with Apple matchea por
+    // User.email). Normaliza a minúsculas y valida formato; luego
+    // chequea que no esté tomado por OTRA cuenta de la escuela
+    // (uniq_school_email). El check es PREVIO a crear el Guardian para
+    // no dejar una ficha con un correo que no se pudo ligar al User.
+    const emailNorm =
+      email && String(email).trim()
+        ? String(email).trim().toLowerCase()
+        : null;
+    if (emailNorm && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNorm)) {
+      return res
+        .status(400)
+        .json({ message: "Please provide a valid email address." });
+    }
+    if (emailNorm) {
+      const emailOwner = await User.findOne({ school, email: emailNorm });
+      const ownerIsThisUser =
+        emailOwner && user_id && String(emailOwner._id) === String(user_id);
+      if (emailOwner && !ownerIsThisUser) {
+        return res.status(409).json({
+          message: "El correo ya está registrado en la escuela.",
+        });
+      }
     }
 
     // Validar user_id si se pasa (vía signup u otro flujo).
@@ -530,11 +556,13 @@ const createGuardian = async (req, res, next) => {
       const fillIfEmpty =
         (name && (!guardian.name || !guardian.name.trim()) && name.trim()) ||
         (lastname && lastname.trim() && (!guardian.lastname || !guardian.lastname.trim())) ||
-        (relationship && (!guardian.relationship || !guardian.relationship.trim()) && relationship.trim());
+        (relationship && (!guardian.relationship || !guardian.relationship.trim()) && relationship.trim()) ||
+        (emailNorm && !guardian.email);
       if (fillIfEmpty) {
         if (!guardian.name || !guardian.name.trim()) guardian.name = name.trim();
         if (!guardian.lastname || !guardian.lastname.trim()) guardian.lastname = lastname.trim();
         if (!guardian.relationship || !guardian.relationship.trim()) guardian.relationship = relationship.trim();
+        if (emailNorm && !guardian.email) guardian.email = emailNorm;
         await guardian.save();
       }
       if (validStudents.length > 0) {
@@ -558,6 +586,7 @@ const createGuardian = async (req, res, next) => {
         lastname: lastname && lastname.trim() ? lastname.trim() : "",
         phone,
         relationship,
+        email: emailNorm,
         user_id: user_id || null,
         students: validStudents,
         notification_prefs: {
@@ -585,6 +614,7 @@ const createGuardian = async (req, res, next) => {
       name: guardian.name,
       lastname: guardian.lastname,
       phone: guardian.phone,
+      email: emailNorm,
     });
 
     let warning = null;
@@ -614,6 +644,10 @@ const createGuardian = async (req, res, next) => {
       }
     } else if (tutorResult.reason === "phone_taken") {
       warning = tutorResult.message; // "Teléfono ya registrado"
+    } else if (tutorResult.reason === "email_taken") {
+      // Carrera con otro alta que tomó el mismo correo entre el
+      // pre-chequeo y el create del User.
+      warning = tutorResult.message;
     } else if (tutorResult.reason === "missing_args") {
       // No debería pasar (validamos antes), pero por seguridad:
       warning = "No se pudo crear la cuenta del tutor";
@@ -846,6 +880,30 @@ const updateGuardian = async (req, res, next) => {
       }
     }
 
+    // Validar email si se actualiza (opcional): formato + que no esté
+    // tomado por OTRA cuenta de la escuela (uniq_school_email). "" →
+    // null (limpiar el campo) no valida unicidad.
+    if (req.body.email !== undefined && req.body.email !== null) {
+      const emailNorm = String(req.body.email).trim().toLowerCase();
+      if (emailNorm && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNorm)) {
+        return res
+          .status(400)
+          .json({ message: "Please provide a valid email address." });
+      }
+      if (emailNorm) {
+        const emailOwner = await User.findOne({
+          school: guardian.school,
+          email: emailNorm,
+          _id: { $ne: guardian.user_id || null },
+        });
+        if (emailOwner) {
+          return res.status(409).json({
+            message: "El correo ya está registrado en la escuela.",
+          });
+        }
+      }
+    }
+
     // Validar user_id si se actualiza
     if (req.body.user_id !== undefined && req.body.user_id !== null) {
       if (!mongoose.Types.ObjectId.isValid(req.body.user_id)) {
@@ -932,6 +990,17 @@ const updateGuardian = async (req, res, next) => {
     const { students: _ignore, notification_prefs: _ignorePrefs, ...rest } = req.body;
     Object.assign(guardian, rest);
     await guardian.save();
+
+    // Sincronizar el correo al User tutor: es el campo que consulta
+    // Sign in with Apple (lookup por User.email). guardian.email ya
+    // quedó normalizado (setter del modelo: minúsculas, "" → null).
+    // updateOne en vez de save() para no pasar por hooks de User.
+    if (req.body.email !== undefined && guardian.user_id) {
+      await User.updateOne(
+        { _id: guardian.user_id },
+        { $set: { email: guardian.email } }
+      );
+    }
 
     // Sincronizar el User tutor cuando cambió isActive (en cualquier
     // dirección). Si el tutor se desactivó y ya no queda asociado a

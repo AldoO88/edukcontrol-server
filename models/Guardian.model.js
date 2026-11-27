@@ -60,6 +60,28 @@ const guardianSchema = new Schema(
       trim: true,
       match: [/^\d{10}$/, "Phone must be 10 digits."],
     },
+    // Correo opcional del tutor. Existe para poder dar de alta el
+    // correo del Apple ID y que "Sign in with Apple" matchee la cuenta
+    // (POST /auth/apple busca por `User.email`; este campo es el espejo
+    // en la ficha del Guardian, igual que name/lastname → User.name/
+    // last_name). La unicidad por escuela la impone el índice de
+    // User.email (uniq_school_email), no un índice propio: la
+    // identidad del tutor sigue siendo el teléfono. Se guarda en
+    // minúsculas para que el lookup case-insensitive de Apple matchee.
+    email: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      maxlength: 254,
+      default: null,
+      // "" (form editado y campo vaciado) → null: sin el setter, el
+      // `match` de abajo rechazaría el string vacío en un PUT.
+      set: (v) => (v && String(v).trim() ? String(v).trim().toLowerCase() : null),
+      match: [
+        /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+        "Please provide a valid email address.",
+      ],
+    },
     // Token FCM (Firebase Cloud Messaging) del dispositivo del tutor
     fcm_token: {
       type: String,
