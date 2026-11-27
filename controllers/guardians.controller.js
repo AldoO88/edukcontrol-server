@@ -1617,6 +1617,13 @@ const getMyStudentSchedule = async (req, res, next) => {
 //   - Sin ningún entry → falta
 //   - Cualquier entry con presencia (aunque sea tarde) → asistencia
 //
+// Justificación (2026-11-26): si el log de la falta tiene
+// `justified: true` (flag que pone el trabajador social), el item de
+// `recent_absences` sale como `type: "justified_absence"` con label
+// "Falta Justificada" y `description: "Motivo: …"`. Los conteos y el
+// porcentaje NO cambian: una falta justificada sigue contando como
+// falta (el alumno no asistió).
+//
 // Query params opcionales:
 //   - school_year_id: ciclo específico (default: el activo de la escuela)
 //
@@ -1664,6 +1671,14 @@ const getMyStudentAttendanceSummary = async (req, res, next) => {
       if (log.event_type === "entry" && !day.entry) {
         day.entry = log.event_time;
         day.status = log.status || null;
+        // Flag de justificación del MISMO log que determina el estado
+        // del día (el primer entry gana). Sin esto el summary etiquetaba
+        // toda falta como "Injustificada" aunque el trabajador social la
+        // hubiera justificado (bug reportado 2026-11-26: IKER ELIAN
+        // OLVERA GARCIA — la web mostraba las faltas justificadas y la
+        // app de la madre decía "Falta Injustificada").
+        day.justified = Boolean(log.justified);
+        day.justifiedReason = log.justified_reason || null;
       }
       if (log.event_type === "exit") day.exit = log.event_time;
     }
@@ -1676,13 +1691,23 @@ const getMyStudentAttendanceSummary = async (req, res, next) => {
 
     for (const [dayKey, day] of dayMap) {
       if (!day.entry || day.status === "absent") {
-        // Sin entry, o entry auto-marcado como absent por el cron → falta
+        // Sin entry, o entry auto-marcado como absent por el cron → falta.
+        // La falta PUEDE estar justificada (flag del AttendanceLog): el
+        // label/type lo distingue para que la app del tutor pinte "Falta
+        // Justificada". Los conteos NO cambian: una falta justificada sigue
+        // siendo falta para el % de asistencia (acuerdo con el cliente
+        // 2026-11-26 — el alumno no asistió aunque justifique).
         totalAbsences++;
+        const isJustified = Boolean(day.justified);
         recentAbsences.push({
           date: dayKey,
-          type: "absence",
-          label: "Falta Injustificada",
-          description: "Sin registro de entrada.",
+          type: isJustified ? "justified_absence" : "absence",
+          label: isJustified ? "Falta Justificada" : "Falta Injustificada",
+          description: isJustified
+            ? day.justifiedReason
+              ? `Motivo: ${day.justifiedReason}`
+              : "Falta justificada."
+            : "Sin registro de entrada.",
         });
       } else {
         // Cualquier entry con presencia cuenta como asistencia
@@ -1739,6 +1764,11 @@ const getMyStudentAttendanceSummary = async (req, res, next) => {
 //   - Sin entry → FALTA
 //   - Cualquier entry con presencia → ASISTENCIA
 //
+// Justificación (2026-11-26): si la falta del día está justificada
+// (`AttendanceLog.justified`), `status_label` sale "FALTA JUSTIFICADA"
+// y el row lleva `justified: true` + `justified_reason`. `status` sigue
+// siendo "NO_ENTRY" para no romper apps viejas (STATUS_MAP).
+//
 // Query params opcionales:
 //   - school_year_id: ciclo específico (default: el activo)
 //   - days: cuántos días hacia atrás (default: 30, max: 90)
@@ -1791,6 +1821,12 @@ const getMyStudentAttendanceHistory = async (req, res, next) => {
       if (log.event_type === "entry") {
         day.entries.push(log.event_time);
         day.statuses.push(log.status || null);
+        // Si el log es una falta justificada, guardar el motivo (objeto
+        // para no confundir "justificado sin motivo" con "no justificado").
+        // Bug 2026-11-26: el historial nunca devolvía el flag.
+        if (log.status === "absent" && log.justified) {
+          day.justifiedAbsence = { reason: log.justified_reason || null };
+        }
       } else day.exits.push(log.event_time);
     }
 
@@ -1804,6 +1840,11 @@ const getMyStudentAttendanceHistory = async (req, res, next) => {
 
       // Determinar estado: si el entry es absent (del cron) o no hay entry → falta
       const entryIsAbsent = day.statuses.some((s) => s === "absent");
+      // ¿Esa falta está justificada? (flag del AttendanceLog; ver bug
+      // 2026-11-26). `justifiedAbsence` solo existe si hubo un absent
+      // justificado en el día → si existe, status queda NO_ENTRY igual
+      // (la falta ocurrió), solo cambia el label.
+      const justifiedAbsence = day.justifiedAbsence || null;
       let status;
       if (!firstEntry || entryIsAbsent) {
         status = "NO_ENTRY";
@@ -1840,7 +1881,17 @@ const getMyStudentAttendanceHistory = async (req, res, next) => {
         entry: status === "NO_ENTRY" ? null : formatTime(firstEntry),
         exit: formatTime(lastExit),
         status,
-        status_label: status === "ON_TIME" ? "ASISTENCIA" : "FALTA",
+        status_label:
+          status === "ON_TIME"
+            ? "ASISTENCIA"
+            : justifiedAbsence
+              ? "FALTA JUSTIFICADA"
+              : "FALTA",
+        // Campos ADITIVOS (2026-11-26): `status` NO cambia para no romper
+        // apps viejas que mapean STATUS_MAP[status]. La app nueva los usa
+        // para distinguir falta justificada de injustificada.
+        justified: Boolean(justifiedAbsence),
+        justified_reason: justifiedAbsence ? justifiedAbsence.reason : null,
       });
     }
 
